@@ -198,7 +198,9 @@ function App() {
           
           {isLoading && (
             <div className="loading-indicator">
-              <p>Ollama is thinking...</p>
+              <p>Ollama is thinking... {isLoading && model.includes('sport') ? 
+      "(New models may take time to load on first use)" : ""}</p>
+              <div className="loading-spinner"></div>
             </div>
           )}
         </div>

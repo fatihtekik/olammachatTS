@@ -17,7 +17,11 @@ export async function sendMessage(
     // For Ollama 3B models, we use the /api/generate endpoint
     // or /api/chat depending on the model capabilities
     const endpoint = '/api/chat';
-
+    
+    // Add timeout to prevent hanging indefinitely
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
       headers: {
@@ -27,16 +31,25 @@ export async function sendMessage(
         model,
         messages: formattedMessages,
         stream: false,
+        // Add reasonable defaults to prevent long generations
+        max_tokens: 1000,
       }),
+      signal: controller.signal
     });
+    
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+      const errorText = await response.text();
+      throw new Error(`API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
     return data.message?.content || data.response || '';
   } catch (error) {
+    if (typeof error === 'object' && error !== null && 'name' in error && (error as any).name === 'AbortError') {
+      return "Request timed out. The model might be still loading or the response is taking too long.";
+    }
     console.error('Error communicating with local Ollama instance:', error);
     throw error;
   }
