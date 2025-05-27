@@ -1,25 +1,44 @@
 .chat-input-container {
   display: flex;
-  margin-top: 10px;
+  flex-direction: column;
+  margin-top: 15px;
   border-top: 1px solid #e0e0e0;
-  padding-top: 10px;
+  padding-top: 15px;
+  position: relative;
+}
+
+.attachments-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 5px;
+  background-color: rgba(0, 0, 0, 0.02);
+  border-radius: 8px;
+}
+
+.input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .chat-textarea {
   flex-grow: 1;
   resize: none;
   border: 1px solid #ccc;
-  border-radius: 4px;
-  padding: 12px;
+  border-radius: 20px;
+  padding: 12px 18px;
   font-family: inherit;
-  min-height: 60px;
+  min-height: 50px;
   font-size: 14px;
+  transition: border 0.2s, box-shadow 0.2s;
 }
 
 .chat-textarea:focus {
   outline: none;
-  border-color: #2196f3;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.2);
 }
 
 .chat-textarea.disabled {
@@ -29,24 +48,70 @@
 }
 
 .send-button {
-  margin-left: 8px;
-  padding: 0 16px;
-  background-color: #1976d2;
+  padding: 0 20px;
+  background-color: #0d6efd;
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 20px;
   cursor: pointer;
-  height: 40px;
-  align-self: flex-end;
+  height: 45px;
   font-weight: 500;
-  transition: background-color 0.2s;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.send-button i {
+  margin-right: 5px;
 }
 
 .send-button:hover {
-  background-color: #1565c0;
+  background-color: #0b5ed7;
+  transform: translateY(-1px);
+}
+
+.send-button:active {
+  transform: translateY(1px);
 }
 
 .send-button:disabled {
   background-color: #cccccc;
   cursor: not-allowed;
+  transform: none;
+}
+
+.attach-button {
+  width: 45px;
+  height: 45px;
+  border-radius: 50%;
+  background-color: #f1f1f1;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.attach-button i {
+  font-size: 20px;
+  color: #555;
+}
+
+.attach-button:hover {
+  background-color: #e0e0e0;
+}
+
+.attach-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input-hints {
+  position: absolute;
+  bottom: -20px;
+  left: 12px;
+  font-size: 12px;
+  color: #666;
 }

@@ -2,9 +2,11 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 16px;
+  /* Удаляем ограничение ширины */
+  /* max-width: 800px; */
+  width: 100%;
+  margin: 0;
+  padding: 0;
   box-sizing: border-box;
 }
 
@@ -21,21 +23,18 @@
 
 .App-header {
   background-color: #282c34;
-  min-height: 100vh;
+  padding: 16px 2%;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
-  padding: 16px 0;
-  border-bottom: 1px solid #e0e0e0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .header-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  width: 100%;
   margin-bottom: 12px;
 }
 
@@ -114,6 +113,10 @@
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  background-color: #f0f2f5;
+  width: 100%;
+  padding: 0 2%;
+  box-sizing: border-box;
 }
 
 .chat-history {
@@ -122,6 +125,9 @@
   padding: 16px 0;
   display: flex;
   flex-direction: column;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .empty-state {
@@ -174,6 +180,9 @@
   font-style: italic;
   margin: 10px 0;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .loading-spinner {
@@ -187,71 +196,253 @@
   margin-top: 10px;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+.loading-spinner-small {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: white;
+  animation: spin 1s ease-in-out infinite;
+}
+
+/* Добавим стили для индикатора набора текста */
+.typing-indicator {
+  padding: 10px 15px;
+  background-color: #f5f5f5;
+  border-radius: 15px;
+  border-bottom-left-radius: 5px;
+  max-width: 80%;
+  margin-right: auto;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.typing-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  background-color: #666;
+  border-radius: 50%;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.typing-dot:nth-child(1) { animation-delay: -0.32s; }
+.typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
 }
 
 .chat-actions {
   display: flex;
   justify-content: space-between;
-  margin-top: 10px;
+  margin-top: 20px;
   flex-wrap: wrap;
   gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e0e0e0;
 }
 
-.chat-tips {
+.history-actions {
   display: flex;
-  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
-.chat-tips span {
-  font-size: 12px;
-  color: #666;
-}
-
-.dev-button {
-  padding: 6px 10px;
-  background-color: #e3f2fd;
-  color: #1565c0;
-  border: 1px solid #bbdefb;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.dev-button:hover {
-  background-color: #bbdefb;
-}
-
-.dev-button:disabled {
-  background-color: #f5f5f5;
-  color: #bdbdbd;
-  border-color: #e0e0e0;
-  cursor: not-allowed;
-}
-
-.clear-button {
-  padding: 8px 16px;
-  background-color: #f44336;
-  color: white;
+.history-button {
+  padding: 8px 12px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.clear-button:hover {
-  background-color: #d32f2f;
+.import-button {
+  background-color: #6c757d;
+  color: white;
 }
 
+.import-button:hover {
+  background-color: #5a6268;
+}
+
+.export-button {
+  background-color: #28a745;
+  color: white;
+}
+
+.export-button:hover {
+  background-color: #218838;
+}
+
+.history-button:disabled,
 .clear-button:disabled {
   background-color: #cccccc;
   cursor: not-allowed;
 }
 
+.history-button i,
+.clear-button i {
+  font-size: 14px;
+}
+
+/* Стили для новых элементов интерфейса */
+.sessions-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.toggle-sessions-button {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.toggle-sessions-button:hover {
+  background-color: #5a6268;
+}
+
+.active-session-name {
+  font-size: 14px;
+  color: #fff;
+  background-color: rgba(255, 255, 255, 0.2);
+  padding: 3px 8px;
+  border-radius: 4px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.new-chat-button {
+  background-color: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.new-chat-button:hover {
+  background-color: #218838;
+}
+
+.history-button {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.history-button:hover {
+  background-color: #5a6268;
+}
+
+/* Стили для выпадающего меню */
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-toggle {
+  background-color: #17a2b8;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dropdown-toggle:hover {
+  background-color: #138496;
+}
+
+.dropdown-menu {
+  display: none;
+  position: absolute;
+  background-color: #fff;
+  min-width: 220px;
+  box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+  z-index: 1;
+  border-radius: 4px;
+  padding: 5px 0;
+}
+
+.dropdown:hover .dropdown-menu {
+  display: block;
+}
+
+.dropdown-item {
+  color: #212529;
+  padding: 8px 16px;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.dropdown-item:hover {
+  background-color: #f8f9fa;
+}
+
+.dropdown-item:disabled {
+  color: #adb5bd;
+  cursor: not-allowed;
+}
+
+/* Стили для широких экранов */
+@media (min-width: 1600px) {
+  .chat-history {
+    max-width: 1400px;
+  }
+}
+
+/* Стили для ультра-широких экранов */
+@media (min-width: 2000px) {
+  .chat-history {
+    max-width: 1800px;
+  }
+}
+
+/* Стили для мобильных устройств */
 @media (max-width: 600px) {
   .App {
     padding: 8px;

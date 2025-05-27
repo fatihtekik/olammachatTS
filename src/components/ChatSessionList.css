@@ -1,0 +1,127 @@
+.chat-sessions-list {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto 15px;
+  background-color: #f5f5f5;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sessions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+  background-color: #e9ecef;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.sessions-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.new-session-button {
+  background-color: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.new-session-button:hover {
+  background-color: #218838;
+}
+
+.sessions-container {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.no-sessions {
+  padding: 20px;
+  text-align: center;
+  color: #6c757d;
+}
+
+.sessions-list {
+  list-style-type: none;
+  margin: 0;
+  padding: 0;
+}
+
+.session-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+  border-bottom: 1px solid #dee2e6;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.session-item:hover {
+  background-color: #e9ecef;
+}
+
+.session-item.active {
+  background-color: #cfe2ff;
+  border-left: 3px solid #0d6efd;
+}
+
+.session-info {
+  flex-grow: 1;
+  margin-right: 10px;
+}
+
+.session-title {
+  font-weight: bold;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.session-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: #6c757d;
+}
+
+.session-model {
+  background-color: #e2e3e5;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.delete-session {
+  background: none;
+  border: none;
+  color: #dc3545;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.delete-session:hover {
+  opacity: 1;
+}
+
+/* Адаптивные стили для списка сессий на больших экранах */
+@media (min-width: 1600px) {
+  .chat-sessions-list {
+    max-width: 1400px;
+  }
+}
+
+@media (min-width: 2000px) {
+  .chat-sessions-list {
+    max-width: 1800px;
+  }
+}
