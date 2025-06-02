@@ -4,11 +4,10 @@ import './FileAttachment.css';
 
 interface FileAttachmentProps {
   file: FileAttachmentType;
-  onRemove?: () => void; // Опциональный обработчик удаления
+  onRemove?: () => void; 
 }
 
 const FileAttachment: React.FC<FileAttachmentProps> = ({ file, onRemove }) => {
-  // Форматирование размера файла
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + ' B';
     else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
@@ -16,7 +15,6 @@ const FileAttachment: React.FC<FileAttachmentProps> = ({ file, onRemove }) => {
     else return (bytes / 1073741824).toFixed(1) + ' GB';
   };
 
-  // Определение иконки на основе типа файла
   const getFileIcon = (type: string): string => {
     if (type.startsWith('image/')) return 'bi-file-image';
     if (type === 'application/pdf') return 'bi-file-pdf';

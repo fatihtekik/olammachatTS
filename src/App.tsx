@@ -5,138 +5,206 @@ import ChatMessage from './components/ChatMessage';
 import ChatInput from './components/ChatInput';
 import ModelSelector from './components/ModelSelector';
 import ChatSessionList from './components/ChatSessionList';
+import LoadingIndicator from './components/LoadingIndicator';
 import { Message, ModelType, ChatSession, FileAttachment } from './types/chat';
 import { sendMessage, getAvailableModels, testConnection } from './services/ollamaApi';
-import { saveSessions, loadSessions, exportSessionsToFile, importSessionsFromFile } from './services/storageService';
-
-// Ключ для localStorage
-const STORAGE_KEY = 'ollamaChat';
+import { exportSessionsToFile, importSessionsFromFile } from './services/storageService';
+import Auth from './components/Auth';
+import UserProfile from './components/UserProfile';
+import { authAPI, chatAPI } from './services/backendApi';
 
 function App() {
-  // Состояние для текущей сессии
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(authAPI.isAuthenticated());
+  const [currentUser, setCurrentUser] = useState<{id: string, username: string, email: string, full_name?: string} | null>(null);
+    // Current session state
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [model, setModel] = useState<ModelType>('phi3:3b');
+  const [model, setModel] = useState<ModelType>('phi3');
   
-  // Состояние для истории сессий
+  // Session history state
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [showSessions, setShowSessions] = useState<boolean>(false);
-  
-  const [models, setModels] = useState<{id: string, name: string}[]>([
-    { id: 'phi3:3b', name: 'Phi-3 (3B)' },
-    { id: 'tinyllama', name: 'TinyLlama' },
-    { id: 'gemma:2b', name: 'Gemma (2B)' }
-  ]);
+  // Изначально пустой список моделей, который будет заполнен из Ollama
+  const [models, setModels] = useState<{id: string, name: string}[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking');
   const chatHistoryRef = useRef<HTMLDivElement>(null);
 
-  // Загрузка истории чата при первом рендере
+  // Load user profile on authentication
   useEffect(() => {
-    const loadChatHistory = async () => {
-      try {
-        const { sessions: loadedSessions, activeSessionId: loadedActiveSessionId } = await loadSessions();
-        
-        if (loadedSessions && loadedSessions.length > 0) {
-          setSessions(loadedSessions);
-          
-          // Установка активной сессии
-          if (loadedActiveSessionId && loadedSessions.find(s => s.id === loadedActiveSessionId)) {
-            setActiveSessionId(loadedActiveSessionId);
-            const activeSession = loadedSessions.find(s => s.id === loadedActiveSessionId);
-            if (activeSession) {
-              setMessages(activeSession.messages);
-              setModel(activeSession.model);
-            }
-          } else {
-            // Если activeSessionId невалидный, используем последнюю сессию
-            const lastSession = loadedSessions[loadedSessions.length - 1];
-            setActiveSessionId(lastSession.id);
-            setMessages(lastSession.messages);
-            setModel(lastSession.model);
-          }
+    const loadUserProfile = async () => {
+      if (isAuthenticated) {
+        try {
+          const userProfile = await authAPI.getProfile();
+          setCurrentUser({
+            id: userProfile.id,
+            username: userProfile.username,
+            email: userProfile.email,
+            full_name: userProfile.full_name
+          });
+          loadChatHistory();
+        } catch (error) {
+          console.error('Failed to load user profile:', error);
+          handleLogout();
         }
-      } catch (error) {
-        console.error('Failed to load chat history:', error);
       }
     };
     
-    loadChatHistory();
+    loadUserProfile();
+  }, [isAuthenticated]);
+
+  // Load chat history from backend
+  const loadChatHistory = async () => {
+    if (!isAuthenticated) return;
     
-    const checkConnection = async () => {
+    try {
+      const backendSessions = await chatAPI.getSessions();
+      
+      if (backendSessions && backendSessions.length > 0) {
+        // Convert backend format to frontend format
+        const convertedSessions: ChatSession[] = backendSessions.map((session: any) => ({
+          id: session.id,
+          title: session.title,
+          messages: session.messages.map((msg: any) => ({
+            id: msg.id || uuidv4(),
+            role: msg.role,
+            content: msg.content,
+            timestamp: new Date(msg.timestamp),
+            attachments: msg.attachments || []
+          })),
+          model: session.model,
+          createdAt: new Date(session.created_at),
+          updatedAt: new Date(session.updated_at)
+        }));
+        
+        setSessions(convertedSessions);
+        
+        // Set active session to the most recently updated one
+        const mostRecentSession = convertedSessions.sort(
+          (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()
+        )[0];
+        
+        if (mostRecentSession) {
+          setActiveSessionId(mostRecentSession.id);
+          setMessages(mostRecentSession.messages);
+          setModel(mostRecentSession.model);
+        }
+      } else {
+        createNewSession();
+      }
+    } catch (error) {
+      console.error('Failed to load chat history:', error);
+    }
+  };
+
+  // Check Ollama connection
+  useEffect(() => {    const checkConnection = async () => {
       setConnectionStatus('checking');
       const isConnected = await testConnection();
-      setConnectionStatus(isConnected ? 'connected' : 'disconnected');
       
       if (isConnected) {
-        // Load available models from local Ollama
-        const modelList = await getAvailableModels();
-        if (modelList.length > 0) {
-          setModels(modelList);
+        try {
+          // Загружаем доступные модели из локального Ollama
+          const modelList = await getAvailableModels();
           
-          // Try to find a 3B model to set as default
-          const smallModel = modelList.find(m => 
-            m.id.toLowerCase().includes('3b') || 
-            m.id.toLowerCase().includes('phi') ||
-            m.id.toLowerCase().includes('tiny')
-          );
-          
-          if (smallModel) {
-            setModel(smallModel.id);
-          } else if (modelList.length > 0) {
-            setModel(modelList[0].id);
+          if (modelList.length > 0) {
+            console.log('Found models in Ollama:', modelList);
+            setModels(modelList);
+            
+            // Пытаемся найти подходящую модель по умолчанию в следующем порядке предпочтения:
+            // 1. Текущая выбранная модель (если она существует в списке)
+            // 2. phi (модели Phi)
+            // 3. llama (модели Llama)
+            // 4. gemma (модели Gemma)
+            // 5. Любая небольшая модель с "3b" или "tiny" в названии
+            // 6. Первая доступная модель
+            
+            // Сначала проверим, существует ли текущая модель в списке
+            const currentModelExists = modelList.some(m => m.id === model);
+            
+            if (currentModelExists) {
+              // Оставляем текущую модель
+              console.log('Current model exists in Ollama:', model);
+            } else {
+              // Ищем другие подходящие модели
+              const phiModel = modelList.find(m => 
+                m.id.toLowerCase().includes('phi')
+              );
+              
+              const llamaModel = modelList.find(m => 
+                m.id.toLowerCase().includes('llama')
+              );
+              
+              const gemmaModel = modelList.find(m => 
+                m.id.toLowerCase().includes('gemma')
+              );
+              
+              const smallModel = modelList.find(m => 
+                m.id.toLowerCase().includes('3b') || 
+                m.id.toLowerCase().includes('tiny')
+              );
+              
+              if (phiModel) {
+                console.log('Selected Phi model:', phiModel.id);
+                setModel(phiModel.id);
+              } else if (llamaModel) {
+                console.log('Selected Llama model:', llamaModel.id);
+                setModel(llamaModel.id);
+              } else if (gemmaModel) {
+                console.log('Selected Gemma model:', gemmaModel.id);
+                setModel(gemmaModel.id);
+              } else if (smallModel) {
+                console.log('Selected small model:', smallModel.id);
+                setModel(smallModel.id);
+              } else if (modelList.length > 0) {
+                console.log('Selected first available model:', modelList[0].id);
+                setModel(modelList[0].id);
+              }
+            }
+            
+            setConnectionStatus('connected');
+          } else {
+            console.warn("No models found in Ollama.");
+            setConnectionStatus('disconnected');
           }
+        } catch (error) {
+          console.error("Failed to fetch models from Ollama:", error);
+          setConnectionStatus('disconnected');
         }
+      } else {
+        setConnectionStatus('disconnected');
       }
     };
     
     checkConnection();
+  }, []);
+
+  // Update active session in backend whenever messages change
+  useEffect(() => {
+    if (!isAuthenticated || !activeSessionId || messages.length === 0) return;
     
-    // Предлагаем сделать резервную копию, если накопилось много чатов
-    const askForBackup = () => {
-      if (sessions.length > 5) {
-        const lastBackup = localStorage.getItem('ollamaChat_lastBackup');
-        const now = new Date();
-        
-        // Если прошло более 7 дней с последнего бэкапа или его не было
-        if (!lastBackup || (now.getTime() - new Date(lastBackup).getTime()) > 7 * 24 * 60 * 60 * 1000) {
-          if (window.confirm('Рекомендуется создать резервную копию ваших чатов. Сделать это сейчас?')) {
-            exportSessionsToFile(sessions);
-            localStorage.setItem('ollamaChat_lastBackup', now.toISOString());
-          } else {
-            // Напомним через неделю
-            localStorage.setItem('ollamaChat_lastBackup', now.toISOString());
-          }
+    const updateSessionInBackend = async () => {
+      try {
+        const activeSession = sessions.find(s => s.id === activeSessionId);
+        if (activeSession) {
+          await chatAPI.updateSession(activeSessionId, activeSession.title, model);
+          
+          // Update messages for this session
+          await chatAPI.updateSessionMessages(activeSessionId, messages);
         }
+      } catch (error) {
+        console.error('Error updating session in backend:', error);
       }
     };
     
-    // Запускаем проверку бэкапа через 5 секунд после загрузки
-    const backupTimer = setTimeout(askForBackup, 5000);
+    // Use debounce to prevent too many API calls
+    const updateTimer = setTimeout(updateSessionInBackend, 1000);
     
-    return () => clearTimeout(backupTimer);
-  }, []);
+    return () => clearTimeout(updateTimer);
+  }, [messages, activeSessionId, model, isAuthenticated]);
 
-  // Сохранение истории чатов при изменении
-  useEffect(() => {
-    // Пропускаем первичную инициализацию
-    if (sessions.length === 0 && !activeSessionId) return;
-    
-    // Обновляем сессию только если есть activeSessionId
-    if (activeSessionId && messages.length > 0) {
-      updateActiveSession();
-    }
-    
-    // Сохранение с небольшой задержкой для предотвращения слишком частых операций
-    const saveTimer = setTimeout(() => {
-      saveSessions(sessions, activeSessionId)
-        .catch(error => console.error('Error saving sessions:', error));
-    }, 500);
-    
-    return () => clearTimeout(saveTimer);
-  }, [messages, sessions, activeSessionId, model]);
-
-  // Обновление активной сессии при изменении сообщений
+  // Update active session in local state
   const updateActiveSession = () => {
     if (!activeSessionId) return;
     
@@ -155,148 +223,128 @@ function App() {
     });
   };
 
-  // Создание новой сессии чата
-  const createNewSession = () => {
-    const newSessionId = uuidv4();
-    const newSession: ChatSession = {
-      id: newSessionId,
-      title: `Чат ${sessions.length + 1}`,
-      messages: [],
-      model: model,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
+  // Create new session
+  const createNewSession = async () => {
+    if (!isAuthenticated) return;
     
-    setSessions([...sessions, newSession]);
-    setActiveSessionId(newSessionId);
-    setMessages([]);
-    setShowSessions(false);
-  };
-
-  // Выбор существующей сессии
-  const selectSession = (sessionId: string) => {
-    const session = sessions.find(s => s.id === sessionId);
-    if (session) {
-      setActiveSessionId(sessionId);
-      setMessages(session.messages);
-      setModel(session.model);
-      setShowSessions(false);
-    }
-  };
-
-  // Удаление сессии
-  const deleteSession = (sessionId: string) => {
-    setSessions(prev => prev.filter(s => s.id !== sessionId));
-    
-    // Если удаляем активную сессию, выберем другую или создадим новую
-    if (sessionId === activeSessionId) {
-      const remainingSessions = sessions.filter(s => s.id !== sessionId);
-      if (remainingSessions.length > 0) {
-        const lastSession = remainingSessions[remainingSessions.length - 1];
-        setActiveSessionId(lastSession.id);
-        setMessages(lastSession.messages);
-        setModel(lastSession.model);
-      } else {
-        createNewSession();
-      }
-    }
-  };
-
-  const chatHistoryScrollToBottom = () => {
-    if (chatHistoryRef.current) {
-      chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
-    }
-  };
-
-  // Check connection to Ollama and load models
-  useEffect(() => {
-    const checkConnection = async () => {
-      setConnectionStatus('checking');
-      const isConnected = await testConnection();
-      setConnectionStatus(isConnected ? 'connected' : 'disconnected');
+    try {
+      const newTitle = `Chat ${sessions.length + 1}`;
+      const response = await chatAPI.createSession(newTitle, model);
       
-      if (isConnected) {
-        // Load available models from local Ollama
-        const modelList = await getAvailableModels();
-        if (modelList.length > 0) {
-          setModels(modelList);
-          
-          // Try to find a 3B model to set as default
-          const smallModel = modelList.find(m => 
-            m.id.toLowerCase().includes('3b') || 
-            m.id.toLowerCase().includes('phi') ||
-            m.id.toLowerCase().includes('tiny')
-          );
-          
-          if (smallModel) {
-            setModel(smallModel.id);
-          } else if (modelList.length > 0) {
-            setModel(modelList[0].id);
-          }
+      const newSession: ChatSession = {
+        id: response.id,
+        title: newTitle,
+        messages: [],
+        model: model,
+        createdAt: new Date(response.created_at),
+        updatedAt: new Date(response.updated_at)
+      };
+      
+      setSessions(prev => [...prev, newSession]);
+      setActiveSessionId(newSession.id);
+      setMessages([]);
+      setShowSessions(false);
+    } catch (error) {
+      console.error('Failed to create new session:', error);
+    }
+  };
+
+  // Select existing session
+  const selectSession = async (sessionId: string) => {
+    try {
+      const session = sessions.find(s => s.id === sessionId);
+      
+      if (session) {
+        // If we already have the session data locally
+        setActiveSessionId(sessionId);
+        setMessages(session.messages);
+        setModel(session.model);
+        setShowSessions(false);
+      } else {
+        // Fetch session data from backend
+        const sessionData = await chatAPI.getSessionById(sessionId);
+        
+        const convertedMessages = sessionData.messages.map((msg: any) => ({
+          id: msg.id || uuidv4(),
+          role: msg.role,
+          content: msg.content,
+          timestamp: new Date(msg.timestamp),
+          attachments: msg.attachments || []
+        }));
+        
+        setActiveSessionId(sessionId);
+        setMessages(convertedMessages);
+        setModel(sessionData.model);
+        setShowSessions(false);
+      }
+    } catch (error) {
+      console.error('Error selecting session:', error);
+    }
+  };
+
+  // Delete session
+  const deleteSession = async (sessionId: string) => {
+    try {
+      await chatAPI.deleteSession(sessionId);
+      
+      setSessions(prev => prev.filter(s => s.id !== sessionId));
+      
+      // If deleting active session, select another one or create new
+      if (sessionId === activeSessionId) {
+        const remainingSessions = sessions.filter(s => s.id !== sessionId);
+        if (remainingSessions.length > 0) {
+          const lastSession = remainingSessions[remainingSessions.length - 1];
+          selectSession(lastSession.id);
+        } else {
+          createNewSession();
         }
       }
-    };
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+    }
+  };
+
+  // Rename session
+  const renameSession = async (sessionId: string, newTitle: string) => {
+    try {
+      await chatAPI.updateSession(sessionId, newTitle);
+      
+      setSessions(prevSessions => {
+        return prevSessions.map(session => {
+          if (session.id === sessionId) {
+            return { ...session, title: newTitle };
+          }
+          return session;
+        });
+      });
+    } catch (error) {
+      console.error('Failed to rename session:', error);
+    }
+  };
+  // Handle message submission
+  const handleSubmit = async (content: string, attachments: FileAttachment[] = []) => {
+    if (!content.trim() && attachments.length === 0) return;
     
-    checkConnection();
-
-    // Load chat history from localStorage
-    const savedMessages = localStorage.getItem('ollamaLocalChatHistory');
-    if (savedMessages) {
-      try {
-        const parsedMessages = JSON.parse(savedMessages).map((msg: any) => ({
-          ...msg,
-          timestamp: new Date(msg.timestamp)
-        }));
-        setMessages(parsedMessages);
-      } catch (error) {
-        console.error('Failed to load chat history', error);
-      }
+    // Create session if none active
+    if (!activeSessionId) {
+      await createNewSession();
     }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem('ollamaLocalChatHistory', JSON.stringify(messages));
-  }, [messages]);
-
-  useEffect(() => {
-    chatHistoryScrollToBottom();
-  }, [messages]);
-
-  // Обновим функцию handleSendMessage для поддержки вложений
-  const handleSendMessage = async (content: string, attachments?: FileAttachment[]) => {
-    // Не отправляем пустые сообщения без вложений
-    if ((!content.trim() && (!attachments || attachments.length === 0)) || 
-        isLoading || 
-        connectionStatus !== 'connected') return;
-
-    // Если нет активной сессии, создаем новую
-    if (!activeSessionId || sessions.length === 0) {
-      createNewSession();
-    }
-
+    
+    // Add user message
     const userMessage: Message = {
       id: uuidv4(),
       role: 'user',
-      content: content.trim(),
+      content: content,
       timestamp: new Date(),
-      attachments
+      attachments: attachments.length > 0 ? attachments : undefined
     };
-
-    setMessages(prev => [...prev, userMessage]);
+    
+    setMessages(messages => [...messages, userMessage]);
     setIsLoading(true);
-
+    
     try {
-      // Добавляем информацию о вложениях в контент сообщения для модели
-      let enhancedContent = content;
-      if (attachments && attachments.length > 0) {
-        enhancedContent += "\n\n[Вложения: " + 
-          attachments.map(a => `${a.name} (${a.type})`).join(", ") + "]";
-      }
-
-      const response = await sendMessage(model, [...messages, {
-        ...userMessage,
-        content: enhancedContent
-      }]);
+      // Call Ollama API
+      const response = await sendMessage(model, [...messages, userMessage]);
       
       const assistantMessage: Message = {
         id: uuidv4(),
@@ -304,285 +352,222 @@ function App() {
         content: response,
         timestamp: new Date()
       };
-
-      setMessages(prev => [...prev, assistantMessage]);
       
-      // Обновляем заголовок сессии, используя первое сообщение пользователя
-      if (messages.length === 0) {
-        const title = content.length > 30 
-          ? content.substring(0, 30) + '...' 
-          : content || 'Чат с вложениями';
-          
-        setSessions(prev => prev.map(session => {
-          if (session.id === activeSessionId) {
-            return { ...session, title };
-          }
-          return session;
-        }));
+      setMessages(messages => [...messages, assistantMessage]);
+      
+      // Generate title for new sessions based on first message
+      if (sessions.find(s => s.id === activeSessionId)?.messages.length === 0) {
+        const generatedTitle = content.length > 30 
+          ? content.substring(0, 30) + '...'
+          : content;
+        renameSession(activeSessionId!, generatedTitle);
       }
-    } catch (error) {
-      console.error('Failed to get response from Ollama:', error);
+    } catch (error: any) {
+      console.error('Error sending message:', error);
+        let errorContent = `Error: ${error.message || 'Failed to get response'}`;
+      
+      // Add helpful instructions if the model was not found
+      if (error.message && error.message.includes('not found')) {
+        errorContent += `\n\nPlease make sure the model "${model}" is installed on your Ollama instance.\n\nYou can install it by running this command in your terminal:\n\nollama pull ${model}\n\nAfter installation is complete, click the refresh button (↻) next to the model selector to update the available models list or try sending your message again.\n\nAvailable models: ${models.map(m => m.id).join(', ')}`;
+      }
       
       const errorMessage: Message = {
         id: uuidv4(),
         role: 'assistant',
-        content: 'Error connecting to local Ollama instance. Please check that Ollama is running in your terminal.',
+        content: errorContent,
         timestamp: new Date(),
         error: true
       };
-
-      setMessages(prev => [...prev, errorMessage]);
       
-      // Check connection status again
-      const isConnected = await testConnection();
-      setConnectionStatus(isConnected ? 'connected' : 'disconnected');
+      setMessages(messages => [...messages, errorMessage]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleClearHistory = () => {
-    if (window.confirm('Are you sure you want to clear all chat history?')) {
-      setMessages([]);
-      localStorage.removeItem('ollamaLocalChatHistory');
-    }
+  // Handle successful authentication
+  const handleAuthSuccess = () => {
+    setIsAuthenticated(true);
   };
 
-  // Экспорт истории чата в JSON-файл
-  const handleExportCurrentSession = () => {
-    if (!activeSessionId || messages.length === 0) {
-      alert('Нет активного чата для экспорта');
-      return;
-    }
-    
-    const session = sessions.find(s => s.id === activeSessionId);
-    if (session) {
-      exportSessionsToFile([session]);
-    }
+  // Handle logout
+  const handleLogout = () => {
+    authAPI.logout();
+    setIsAuthenticated(false);
+    setCurrentUser(null);
+    setSessions([]);
+    setMessages([]);
+    setActiveSessionId(null);
   };
 
-  // Обработчик для экспорта всей истории чатов
-  const handleExportAllSessions = () => {
-    if (sessions.length === 0) {
-      alert('Нет сохраненных чатов для экспорта');
-      return;
-    }
-    
+  // Export chat sessions to file
+  const handleExportSessions = () => {
     exportSessionsToFile(sessions);
   };
 
-  // Обработчик для импорта истории чатов
-  const handleImportSessions = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    
+  // Import chat sessions from file
+  const handleImportSessions = async (importedSessions: ChatSession[]) => {
     try {
-      const importedSessions = await importSessionsFromFile(file);
+      // For each imported session, create in backend
+      const backendSessions = await Promise.all(
+        importedSessions.map(async session => {
+          try {
+            const created = await chatAPI.createSession(session.title, session.model);
+            
+            // Update messages for this session
+            if (session.messages.length > 0) {
+              await chatAPI.updateSessionMessages(created.id, session.messages);
+            }
+            
+            return {
+              ...session,
+              id: created.id,
+              createdAt: new Date(created.created_at),
+              updatedAt: new Date(created.updated_at)
+            };
+          } catch (error) {
+            console.error('Failed to import session:', error);
+            return null;
+          }
+        })
+      );
       
-      if (window.confirm(`Импортировать ${importedSessions.length} чатов? Текущие чаты будут объединены с импортированными.`)) {
-        // Объединение с существующими сессиями, избегая дубликатов
-        const existingIds = new Set(sessions.map(s => s.id));
-        const newSessions = importedSessions.filter(s => !existingIds.has(s.id));
-        
-        setSessions(prev => [...prev, ...newSessions]);
-        
-        if (newSessions.length > 0 && window.confirm('Открыть первую импортированную сессию?')) {
-          const firstNewSession = newSessions[0];
-          setActiveSessionId(firstNewSession.id);
-          setMessages(firstNewSession.messages);
-          setModel(firstNewSession.model);
-        }
+      // Filter out failed imports
+      const validSessions = backendSessions.filter(s => s !== null) as ChatSession[];
+      
+      // Update local state with new sessions
+      setSessions(prev => [...prev, ...validSessions]);
+      
+      // Set active session to first imported one
+      if (validSessions.length > 0) {
+        setActiveSessionId(validSessions[0].id);
+        setMessages(validSessions[0].messages);
+        setModel(validSessions[0].model);
       }
     } catch (error) {
-      console.error('Error importing sessions:', error);
-      alert('Не удалось импортировать чаты. Проверьте формат файла.');
+      console.error('Failed to import sessions:', error);
     }
-    
-    // Сбросить input файла
-    event.target.value = '';
   };
 
-  const reconnectToOllama = async () => {
-    setConnectionStatus('checking');
-    const isConnected = await testConnection();
-    setConnectionStatus(isConnected ? 'connected' : 'disconnected');
-    
-    if (isConnected) {
-      // Reload models
-      const modelList = await getAvailableModels();
-      if (modelList.length > 0) {
-        setModels(modelList);
-      }
+  // Scroll to bottom of chat when messages change
+  useEffect(() => {
+    if (chatHistoryRef.current) {
+      chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
     }
-  };
+  }, [messages]);
+
+  // If not authenticated, show login/register form
+  if (!isAuthenticated) {
+    return (
+      <div className="App">
+        <Auth onAuthSuccess={handleAuthSuccess} />
+      </div>
+    );
+  }
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <div className="header-top">
-          <h1>Ollama Local Chat</h1>
-          <div className={`connection-status ${connectionStatus}`}>
-            {connectionStatus === 'connected' && '✓ Connected to local Ollama'}
-            {connectionStatus === 'disconnected' && (
-              <>
-                <span>⚠ Disconnected</span>
-                <button className="reconnect-button" onClick={reconnectToOllama}>
-                  Reconnect
-                </button>
-              </>
-            )}
-            {connectionStatus === 'checking' && 'Checking connection...'}
-          </div>
+    <div className="App">      <header className="App-header">
+        <div className="brand">
+          <h1>OllamaChat</h1>
+          {connectionStatus === 'connected' ? (
+            <span className="status connected">
+              Connected to Ollama ({models.length} {models.length === 1 ? 'model' : 'models'} available)
+            </span>
+          ) : connectionStatus === 'disconnected' ? (
+            <span className="status disconnected">Ollama not available</span>
+          ) : (
+            <span className="status checking">Checking connection...</span>
+          )}
         </div>
         
-        <div className="header-controls">
-          <div className="sessions-control">
-            <button 
-              className="toggle-sessions-button"
-              onClick={() => setShowSessions(!showSessions)}
-            >
-              <i className={`bi ${showSessions ? 'bi-x-lg' : 'bi-clock-history'}`}></i>
-              {showSessions ? 'Скрыть историю' : 'История чатов'}
-            </button>
-            
-            <span className="active-session-name">
-              {activeSessionId && sessions.find(s => s.id === activeSessionId)?.title}
-            </span>
-          </div>
+        <div className="actions">
+          <button onClick={() => setShowSessions(!showSessions)} className="session-button">
+            {showSessions ? 'Hide Sessions' : 'Show Sessions'}
+          </button>
           
-          <ModelSelector 
-            selectedModel={model} 
-            onSelectModel={setModel} 
-            models={models}
-            disabled={connectionStatus !== 'connected'} 
-          />
+          <button onClick={createNewSession} className="new-chat-button">
+            New Chat
+          </button>
+          
+          <div className="user-menu">
+            <UserProfile 
+              username={currentUser?.username || ''}
+              email={currentUser?.email}
+              fullName={currentUser?.full_name}
+              onLogout={handleLogout} 
+              onExportSessions={handleExportSessions}
+              onImportSessions={handleImportSessions}
+            />
+          </div>
         </div>
       </header>
-
-      <div className="chat-container">
-        {showSessions && (
-          <ChatSessionList 
-            sessions={sessions}
-            activeSessionId={activeSessionId}
-            onSelectSession={selectSession}
-            onCreateSession={createNewSession}
-            onDeleteSession={deleteSession}
-          />
-        )}
       
-        <div className="chat-history" ref={chatHistoryRef}>
-          {connectionStatus === 'disconnected' && (
-            <div className="connection-error">
-              <h3>Cannot connect to local Ollama</h3>
-              <p>Please make sure Ollama is running in your terminal. You can start it with:</p>
-              <pre>ollama serve</pre>
-              <button className="reconnect-button" onClick={reconnectToOllama}>
-                Try Again
-              </button>
-            </div>
-          )}
+      <div className="content-wrapper">
+        {showSessions && (
+          <aside className="sidebar">
+            <ChatSessionList
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              onSelectSession={selectSession}
+              onCreateSession={createNewSession}
+              onDeleteSession={deleteSession}
+              onRenameSession={renameSession}
+            />
+          </aside>
+        )}
         
-          {connectionStatus !== 'disconnected' && messages.length === 0 && (
-            <div className="empty-state">
-              <p>No messages yet. Start a conversation with your local Ollama model!</p>
-              <p className="small">Your chat history is saved in your browser and never leaves your computer.</p>
-            </div>
-          )}
-          
-          {messages.map(message => (
-            <ChatMessage key={message.id} message={message} />
-          ))}
-          
-          {isLoading && (
-            <div className="typing-indicator">
-              <div className="typing-dots">
-                <div className="typing-dot"></div>
-                <div className="typing-dot"></div>
-                <div className="typing-dot"></div>
-              </div>
-              <div className="text-muted small mt-2">
-                Ollama is thinking... {model.includes('sport') ? "(New models may take time to load on first use)" : ""}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <ChatInput 
-          onSendMessage={handleSendMessage} 
-          isLoading={isLoading} 
-          disabled={connectionStatus !== 'connected'} 
-          placeholder={connectionStatus !== 'connected' 
-            ? "Connect to Ollama to start chatting..." 
-            : "Message your local Ollama model..."}
-        />
-        
-        <div className="chat-actions">
-          <div className="chat-buttons">
-            <button
-              className="new-chat-button"
-              onClick={createNewSession}
-              disabled={isLoading}
-            >
-              <i className="bi bi-plus-circle"></i> Новый чат
-            </button>
-            
-            <button
-              className="history-button"
-              onClick={() => setShowSessions(!showSessions)}
-            >
-              <i className="bi bi-clock-history"></i> {showSessions ? 'Скрыть историю' : 'Показать историю'}
-            </button>
-            
-            <div className="dropdown">
-              <button className="backup-button dropdown-toggle" type="button" id="backupDropdown">
-                <i className="bi bi-cloud-arrow-up"></i> Резервное копирование
-              </button>
-              <div className="dropdown-menu" aria-labelledby="backupDropdown">
-                <input
-                  type="file"
-                  id="import-chat"
-                  accept=".json"
-                  onChange={handleImportSessions}
-                  style={{ display: 'none' }}
-                />
-                <button 
-                  className="dropdown-item"
-                  onClick={() => document.getElementById('import-chat')?.click()}
-                >
-                  <i className="bi bi-upload"></i> Импортировать чаты
-                </button>
-                <button 
-                  className="dropdown-item"
-                  onClick={handleExportCurrentSession}
-                  disabled={!activeSessionId || messages.length === 0}
-                >
-                  <i className="bi bi-download"></i> Экспортировать текущий чат
-                </button>
-                <button 
-                  className="dropdown-item"
-                  onClick={handleExportAllSessions}
-                  disabled={sessions.length === 0}
-                >
-                  <i className="bi bi-archive"></i> Экспортировать все чаты
-                </button>
-              </div>
-            </div>
-          </div>
-          
-          {activeSessionId && (
-            <button 
-              className="clear-button" 
-              onClick={() => {
-                if (window.confirm('Are you sure you want to clear the current chat?')) {
-                  setMessages([]);
+        <main className="chat-container">          <div className="model-selector-container">
+            <ModelSelector 
+              models={models}
+              selectedModel={model} 
+              onSelectModel={(newModel) => setModel(newModel)}
+              disabled={connectionStatus !== 'connected'}
+              onRefreshModels={async () => {
+                setConnectionStatus('checking');
+                try {
+                  const isConnected = await testConnection();
+                  if (isConnected) {
+                    const freshModels = await getAvailableModels();
+                    setModels(freshModels);
+                    setConnectionStatus('connected');
+                    if (freshModels.length === 0) {
+                      alert('No models found. Please run "ollama pull MODEL_NAME" to download models.');
+                    } else {
+                      // Check if current model exists in the new model list
+                      const currentModelExists = freshModels.some(m => m.id === model);
+                      if (!currentModelExists && freshModels.length > 0) {
+                        setModel(freshModels[0].id);
+                      }
+                    }
+                  } else {
+                    setConnectionStatus('disconnected');
+                  }
+                } catch (error) {
+                  console.error('Error refreshing models:', error);
+                  setConnectionStatus('disconnected');
                 }
               }}
-              disabled={messages.length === 0 || isLoading}
-            >
-              <i className="bi bi-trash"></i> Clear Chat
-            </button>
-          )}
-        </div>
+            />
+          </div>
+          
+          <div className="chat-history" ref={chatHistoryRef}>
+            {messages.map((message) => (
+              <ChatMessage key={message.id} message={message} />
+            ))}            {isLoading && <LoadingIndicator model={model} />}
+            {messages.length === 0 && (
+              <div className="empty-chat">
+                <h2>Start a new conversation</h2>
+                <p>Send a message to begin chatting with the AI.</p>
+              </div>
+            )}
+          </div>
+          
+          <ChatInput 
+            onSendMessage={handleSubmit} 
+            isLoading={isLoading}
+            disabled={connectionStatus !== 'connected'}
+          />
+        </main>
       </div>
     </div>
   );
