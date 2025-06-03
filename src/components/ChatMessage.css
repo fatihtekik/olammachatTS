@@ -9,7 +9,19 @@
 /* Адаптивные стили для чат-сообщений на больших экранах */
 @media (min-width: 1400px) {
   .chat-message {
-    max-width: 70%;
+    max-width: 65%;
+  }
+}
+
+@media (min-width: 1800px) {
+  .chat-message {
+    max-width: 60%;
+  }
+}
+
+@media (min-width: 2400px) {
+  .chat-message {
+    max-width: 50%;
   }
 }
 
