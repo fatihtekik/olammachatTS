@@ -9,8 +9,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "OllamaChat"
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = secrets.token_urlsafe(32)
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 дней
-    # Настройки CORS
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  
     BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5173", "http://localhost:5174"]
     
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
