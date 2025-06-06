@@ -6,8 +6,10 @@ import ChatInput from './components/ChatInput';
 import ModelSelector from './components/ModelSelector';
 import ChatSessionList from './components/ChatSessionList';
 import LoadingIndicator from './components/LoadingIndicator';
+import ConnectionStatus from './components/ConnectionStatus';
 import { Message, ModelType, ChatSession, FileAttachment } from './types/chat';
-import { sendMessage, getAvailableModels, testConnection } from './services/ollamaApi';
+// Импортируем функции из нового сервиса, использующего бэкенд
+import { sendMessage, getAvailableModels, testConnection } from './services/ollamaBackendApi';
 import { exportSessionsToFile, importSessionsFromFile } from './services/storageService';
 import Auth from './components/Auth';
 import UserProfile from './components/UserProfile';
@@ -320,8 +322,7 @@ function App() {
     } catch (error) {
       console.error('Failed to rename session:', error);
     }
-  };
-  // Handle message submission
+  };  // Handle message submission
   const handleSubmit = async (content: string, attachments: FileAttachment[] = []) => {
     if (!content.trim() && attachments.length === 0) return;
     
@@ -343,7 +344,7 @@ function App() {
     setIsLoading(true);
     
     try {
-      // Call Ollama API
+      // Call Ollama API through backend
       const response = await sendMessage(model, [...messages, userMessage]);
       
       const assistantMessage: Message = {
@@ -364,11 +365,19 @@ function App() {
       }
     } catch (error: any) {
       console.error('Error sending message:', error);
-        let errorContent = `Error: ${error.message || 'Failed to get response'}`;
+      let errorContent = `Error: ${error.message || 'Failed to get response'}`;
       
       // Add helpful instructions if the model was not found
       if (error.message && error.message.includes('not found')) {
         errorContent += `\n\nPlease make sure the model "${model}" is installed on your Ollama instance.\n\nYou can install it by running this command in your terminal:\n\nollama pull ${model}\n\nAfter installation is complete, click the refresh button (↻) next to the model selector to update the available models list or try sending your message again.\n\nAvailable models: ${models.map(m => m.id).join(', ')}`;
+      }
+      
+      // Обработка ошибок авторизации
+      if (error.message && error.message.includes('Unauthorized')) {
+        errorContent += `\n\nYou have been logged out. Please login again.`;
+        setTimeout(() => {
+          handleLogout();
+        }, 2000);
       }
       
       const errorMessage: Message = {
@@ -455,12 +464,14 @@ function App() {
       chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
     }
   }, [messages]);
-
   // If not authenticated, show login/register form
   if (!isAuthenticated) {
     return (
       <div className="App">
         <Auth onAuthSuccess={handleAuthSuccess} />
+        <div style={{ maxWidth: '500px', margin: '20px auto' }}>
+          <ConnectionStatus backendUrl="http://localhost:8000" />
+        </div>
       </div>
     );
   }

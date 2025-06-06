@@ -1,3 +1,9 @@
+/**
+ * DEPRECATED: Этот файл больше не используется в основном потоке приложения.
+ * Вместо него используется ollamaBackendApi.ts, который обращается к Ollama через бэкенд.
+ * Этот файл сохранен для обратной совместимости и в качестве примера прямых запросов к API Ollama.
+ */
+
 import { ModelType, Message } from '../types/chat';
 
 // Local Ollama API URL (default port for Ollama)

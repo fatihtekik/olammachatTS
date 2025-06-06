@@ -60,10 +60,10 @@ export const authAPI = {
       throw error;
     }
   },
-
   // Авторизация пользователя
   async login(username: string, password: string) {
     try {
+      console.log(`Авторизация пользователя: ${username}`);
       // Для OAuth2 схемы FastAPI требуется отправка данных в формате формы
       const formData = new URLSearchParams();
       formData.append('username', username);
@@ -77,12 +77,25 @@ export const authAPI = {
         body: formData,
       });
 
+      console.log('Статус ответа на авторизацию:', response.status);
+      
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Ошибка при авторизации');
+        let errorMessage = 'Ошибка при авторизации';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorMessage;
+        } catch (e) {
+          // Если ответ не может быть распарсен как JSON
+          const errorText = await response.text();
+          errorMessage = errorText || errorMessage;
+        }
+        console.error('Ошибка авторизации:', errorMessage);
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
+      console.log('Токен получен успешно');
+      
       // Сохраняем токен в localStorage и переменной authToken
       localStorage.setItem('ollamaChat_authToken', data.access_token);
       authToken = data.access_token;
