@@ -33,16 +33,8 @@ const Sidebar: React.FC = () => {
         </Link>
         
         <Link 
-          to="/upload" 
-          className={`nav-item ${isActive('/upload') ? 'active' : ''}`}
-        >
-          <i className="bi bi-file-earmark-excel"></i>
-          <span>Загрузка Excel</span>
-        </Link>
-        
-        <Link 
-          to="/match-analysis" 
-          className={`nav-item ${isActive('/match-analysis') ? 'active' : ''}`}
+          to="/analysis" 
+          className={`nav-item ${isActive('/analysis') || isActive('/upload') ? 'active' : ''}`}
         >
           <i className="bi bi-graph-up-arrow"></i>
           <span>Анализ матчей</span>

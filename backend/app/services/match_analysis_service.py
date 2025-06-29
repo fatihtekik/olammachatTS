@@ -47,39 +47,71 @@ class MatchAnalysisService:
         try:
             created_players = 0
             created_matches = 0
+            skipped_duplicates = 0
             errors = []
             
-            for match_data in excel_data:
+            logger.info(f"🔄 Начинаем обработку {len(excel_data)} строк из Excel...")
+            
+            for idx, match_data in enumerate(excel_data):
                 try:
+                    logger.info(f"📝 Обрабатываем строку {idx + 1}: {match_data.игрок_1} vs {match_data.игрок_2}")
+                    
                     # Получаем или создаем игроков
-                    player1 = await self._get_or_create_player(match_data.игрок_1)
-                    player2 = await self._get_or_create_player(match_data.игрок_2)
+                    player1, player1_created = await self._get_or_create_player(match_data.игрок_1)
+                    player2, player2_created = await self._get_or_create_player(match_data.игрок_2)
+                    
+                    # Увеличиваем счетчик созданных игроков
+                    if player1_created:
+                        created_players += 1
+                    if player2_created:
+                        created_players += 1
                     
                     if player1.id == player2.id:
+                        logger.warning(f"⚠️  Пропускаем матч: один и тот же игрок")
                         continue  # Пропускаем если это один игрок
+                    
+                    # Парсим дату для проверки дубликата
+                    match_date = self._parse_date(match_data.дата)
+                    
+                    # Проверяем, не существует ли уже такой матч
+                    if self._match_exists(match_date, player1.id, player2.id, match_data.счёт):
+                        skipped_duplicates += 1
+                        logger.info(f"⏭️  Пропускаем дубликат: {match_data.игрок_1} vs {match_data.игрок_2} от {match_date} со счётом {match_data.счёт}")
+                        continue
                     
                     # Создаем матч
                     match = await self._create_match_from_excel(match_data, player1, player2)
                     created_matches += 1
+                    logger.info(f"✅ Создан матч: {match_data.игрок_1} vs {match_data.игрок_2}")
                     
                 except Exception as e:
-                    error_msg = f"Ошибка при обработке матча {match_data.игрок_1} vs {match_data.игрок_2}: {str(e)}"
+                    error_msg = f"Строка {idx + 1}: Ошибка при обработке матча {match_data.игрок_1} vs {match_data.игрок_2}: {str(e)}"
                     errors.append(error_msg)
-                    logger.error(error_msg)
+                    logger.error(f"❌ {error_msg}")
             
-            return {
+            result = {
                 "created_players": created_players,
                 "created_matches": created_matches,
+                "skipped_duplicates": skipped_duplicates,
+                "total_processed": len(excel_data),
                 "errors": errors,
                 "success": True
             }
             
+            logger.info(f"📊 Результат обработки:")
+            logger.info(f"  - Всего строк: {len(excel_data)}")
+            logger.info(f"  - Создано матчей: {created_matches}")
+            logger.info(f"  - Пропущено дубликатов: {skipped_duplicates}")
+            logger.info(f"  - Ошибок: {len(errors)}")
+            
+            return result
+            
         except Exception as e:
-            logger.error(f"Ошибка при обработке Excel данных: {str(e)}")
+            logger.error(f"💥 Ошибка при обработке Excel данных: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    async def _get_or_create_player(self, player_name: str) -> Player:
-        """Получает существующего игрока или создает нового"""
+    async def _get_or_create_player(self, player_name: str) -> tuple[Player, bool]:
+        """Получает существующего игрока или создает нового. Возвращает (игрок, был_создан)"""
         player = self.db.query(Player).filter(Player.full_name == player_name).first()
         
         if not player:
@@ -92,8 +124,10 @@ class MatchAnalysisService:
             stats = PlayerStats(player_id=player.id)
             self.db.add(stats)
             self.db.commit()
+            
+            return player, True  # Игрок был создан
         
-        return player
+        return player, False  # Игрок уже существовал
     
     async def _create_match_from_excel(self, data: ExcelMatchData, player1: Player, player2: Player) -> Match:
         """Создает матч из данных Excel"""
@@ -125,9 +159,11 @@ class MatchAnalysisService:
             is_semifinal=data.стадия and "полуфинал" in data.стадия.lower()
         )
         
-        self.db.add(match)
-        self.db.commit()
-        self.db.refresh(match)
+        # Проверяем на дубликаты
+        if not self._match_exists(match_date, player1.id, player2.id, data.счёт):
+            self.db.add(match)
+            self.db.commit()
+            self.db.refresh(match)
         
         return match
     
@@ -335,11 +371,49 @@ class MatchAnalysisService:
         # Сортируем по win_rate и берем топ 10
         player_stats.sort(key=lambda x: x['win_rate'], reverse=True)
         
-        for stat in player_stats[:10]:
+        for idx, stat in enumerate(player_stats[:10]):
+            # Подсчитываем дополнительную статистику
+            losses = stat['matches'] - stat['wins']
+            sets_won = 0
+            sets_lost = 0
+            recent_form = []
+            
+            # Получаем последние 5 матчей для формы
+            recent_matches = self.db.query(Match).filter(
+                and_(
+                    Match.date >= start_date,
+                    Match.date <= end_date,
+                    or_(Match.player1_id == stat['player'].id, Match.player2_id == stat['player'].id)
+                )
+            ).order_by(Match.date.desc()).limit(5).all()
+            
+            for match in recent_matches:
+                if match.winner_id == stat['player'].id:
+                    recent_form.append('W')
+                else:
+                    recent_form.append('L')
+                
+                # Подсчет сетов
+                if match.player1_id == stat['player'].id:
+                    sets_won += match.sets_player1 or 0
+                    sets_lost += match.sets_player2 or 0
+                else:
+                    sets_won += match.sets_player2 or 0
+                    sets_lost += match.sets_player1 or 0
+            
             player_dict = {
                 'id': stat['player'].id,
                 'full_name': stat['player'].full_name,
                 'current_rating': stat['player'].current_rating,
+                'rank': idx + 1,
+                'matches_played': stat['matches'],
+                'wins': stat['wins'],
+                'losses': losses,
+                'win_rate': round(stat['win_rate'], 1),
+                'sets_won': sets_won,
+                'sets_lost': sets_lost,
+                'sets_ratio': round(sets_won / sets_lost, 2) if sets_lost > 0 else sets_won,
+                'recent_form': ''.join(recent_form),
                 'created_at': stat['player'].created_at,
                 'updated_at': stat['player'].updated_at
             }
@@ -352,6 +426,7 @@ class MatchAnalysisService:
         problem_players = []
         
         players = self.db.query(Player).all()
+        player_stats = []
         
         for player in players:
             matches = self.db.query(Match).filter(
@@ -363,24 +438,97 @@ class MatchAnalysisService:
             ).all()
             
             if len(matches) >= 3:  # Минимум 3 матча
+                wins = len([m for m in matches if m.winner_id == player.id])
                 losses = len([m for m in matches if m.winner_id and m.winner_id != player.id])
                 loss_rate = (losses / len(matches)) * 100
                 
                 if loss_rate >= 60:  # Проблемные игроки с loss rate >= 60%
-                    player_dict = {
-                        'id': player.id,
-                        'full_name': player.full_name,
-                        'current_rating': player.current_rating,
-                        'created_at': player.created_at,
-                        'updated_at': player.updated_at
-                    }
-                    problem_players.append(player_dict)
+                    player_stats.append({
+                        'player': player,
+                        'loss_rate': loss_rate,
+                        'matches': len(matches),
+                        'wins': wins,
+                        'losses': losses
+                    })
         
-        return problem_players[:10]  # Топ 10 проблемных игроков
+        # Сортируем по loss_rate (по убыванию - самые проблемные сначала)
+        player_stats.sort(key=lambda x: x['loss_rate'], reverse=True)
+        
+        for idx, stat in enumerate(player_stats[:10]):
+            # Подсчитываем дополнительную статистику
+            sets_won = 0
+            sets_lost = 0
+            recent_form = []
+            losing_streak = 0
+            current_streak = 0
+            
+            # Получаем все матчи игрока для анализа
+            all_matches = self.db.query(Match).filter(
+                and_(
+                    Match.date >= start_date,
+                    Match.date <= end_date,
+                    or_(Match.player1_id == stat['player'].id, Match.player2_id == stat['player'].id)
+                )
+            ).order_by(Match.date.desc()).all()
+            
+            # Анализируем форму и серии поражений
+            for match in all_matches[:5]:  # Последние 5 матчей для формы
+                if match.winner_id == stat['player'].id:
+                    recent_form.append('W')
+                else:
+                    recent_form.append('L')
+            
+            # Подсчет текущей серии поражений
+            for match in all_matches:
+                if match.winner_id != stat['player'].id:
+                    current_streak += 1
+                else:
+                    break
+            
+            # Подсчет сетов
+            for match in all_matches:
+                if match.player1_id == stat['player'].id:
+                    sets_won += match.sets_player1 or 0
+                    sets_lost += match.sets_player2 or 0
+                else:
+                    sets_won += match.sets_player2 or 0
+                    sets_lost += match.sets_player1 or 0
+            
+            # Подсчет количества триггеров для этого игрока
+            triggers_count = self.db.query(PlayerTrigger).filter(
+                and_(
+                    PlayerTrigger.player_id == stat['player'].id,
+                    PlayerTrigger.period_start == start_date,
+                    PlayerTrigger.period_end == end_date
+                )
+            ).count()
+            
+            player_dict = {
+                'id': stat['player'].id,
+                'full_name': stat['player'].full_name,
+                'current_rating': stat['player'].current_rating,
+                'rank': idx + 1,
+                'matches_played': stat['matches'],
+                'wins': stat['wins'],
+                'losses': stat['losses'],
+                'loss_rate': round(stat['loss_rate'], 1),
+                'win_rate': round((stat['wins'] / stat['matches']) * 100, 1),
+                'sets_won': sets_won,
+                'sets_lost': sets_lost,
+                'sets_ratio': round(sets_won / sets_lost, 2) if sets_lost > 0 else 0,
+                'recent_form': ''.join(recent_form),
+                'current_losing_streak': current_streak,
+                'triggers_count': triggers_count,
+                'created_at': stat['player'].created_at,
+                'updated_at': stat['player'].updated_at
+            }
+            problem_players.append(player_dict)
+        
+        return problem_players
     
     async def _get_all_triggers(self, start_date: date, end_date: date) -> List[dict]:
         """Получает все триггеры за период"""
-        triggers = self.db.query(PlayerTrigger).filter(
+        triggers = self.db.query(PlayerTrigger).join(Player).filter(
             and_(
                 PlayerTrigger.period_start == start_date,
                 PlayerTrigger.period_end == end_date
@@ -389,9 +537,14 @@ class MatchAnalysisService:
         
         result = []
         for trigger in triggers:
+            # Получаем игрока для этого триггера
+            player = self.db.query(Player).filter(Player.id == trigger.player_id).first()
+            
             trigger_dict = {
                 'id': trigger.id,
                 'player_id': trigger.player_id,
+                'player_name': player.full_name if player else 'Неизвестный игрок',
+                'player_rating': player.current_rating if player else None,
                 'trigger_type': trigger.trigger_type,
                 'trigger_subtype': trigger.trigger_subtype,
                 'trigger_value': trigger.trigger_value,
@@ -403,6 +556,9 @@ class MatchAnalysisService:
                 'created_at': trigger.created_at
             }
             result.append(trigger_dict)
+        
+        # Сортируем по уровню серьезности (от самых серьезных к менее серьезным)
+        result.sort(key=lambda x: x['severity_level'] or 0, reverse=True)
         
         return result
     
@@ -820,3 +976,21 @@ class MatchAnalysisService:
                         continue
         
         raise ValueError(f"Не удалось распарсить счёт: {score_str}")
+    
+    def _match_exists(self, date: date, player1_id: str, player2_id: str, score: str) -> bool:
+        """Проверяет, существует ли уже такой матч в базе данных"""
+        # Проверяем точное совпадение: дата, игроки, счет
+        existing_match = self.db.query(Match).filter(
+            and_(
+                Match.date == date,
+                or_(
+                    # Прямой порядок игроков
+                    and_(Match.player1_id == player1_id, Match.player2_id == player2_id),
+                    # Обратный порядок игроков (А vs Б = Б vs А)
+                    and_(Match.player1_id == player2_id, Match.player2_id == player1_id)
+                ),
+                Match.score == score
+            )
+        ).first()
+        
+        return existing_match is not None

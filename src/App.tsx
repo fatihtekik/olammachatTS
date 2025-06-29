@@ -6,7 +6,6 @@ import Sidebar from './components/Sidebar';
 import AnalysisPage from './components/AnalysisPage';
 import ChatPage from './components/ChatPage';
 import ExcelUploadPage from './components/ExcelUploadPage';
-import MatchAnalysisPage from './components/MatchAnalysisPage';
 import { Message, ModelType, ChatSession, FileAttachment, MatchData, TriggerResponse } from './types/chat';
 import { sendMessage, getAvailableModels, testConnection } from './services/ollamaApi';
 import { exportSessionsToFile, importSessionsFromFile } from './services/storageService';
@@ -570,8 +569,7 @@ function App() {
                 />
               } 
             />
-            <Route path="/upload" element={<ExcelUploadPage />} />
-            <Route path="/match-analysis" element={<MatchAnalysisPage />} />
+            <Route path="/analysis" element={<ExcelUploadPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

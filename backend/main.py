@@ -22,7 +22,7 @@ app = FastAPI(
 # Настройка CORS для взаимодействия с фронтендом
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_origins=["*"],  # Разрешаем доступ с любых доменов  
     allow_credentials=True,
     allow_methods=["*"],  # Разрешаем все HTTP методы
     allow_headers=["*"],  # Разрешаем все заголовки

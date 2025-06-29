@@ -10,7 +10,17 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = secrets.token_urlsafe(32)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  
-    BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5173", "http://localhost:5174"]
+    BACKEND_CORS_ORIGINS: List[str] = [
+        "http://localhost:3000", 
+        "http://localhost:8080", 
+        "http://localhost:5173", 
+        "http://localhost:5174",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8080", 
+        "http://127.0.0.1:5173", 
+        "http://127.0.0.1:5174",
+        "*"  # Разрешаем доступ с любых доменов
+    ]
     
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod

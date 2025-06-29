@@ -22,7 +22,12 @@ async def upload_excel_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """Загрузка Excel файла с матчами"""
+    """
+    Загрузка Excel файла с матчами
+    
+    Публичный эндпоинт - доступен всем пользователям без аутентификации.
+    Позволяет загружать Excel файлы с данными о матчах для последующего анализа.
+    """
     logger.info(f"📁 Получен файл для загрузки: {file.filename}")
     
     try:
@@ -139,10 +144,17 @@ async def analyze_triggers(
     request: AnalysisRequest,
     db: Session = Depends(get_db)
 ):
-    """Запуск анализа триггеров"""
+    """
+    Запуск анализа триггеров
+    
+    Публичный эндпоинт - доступен всем пользователям без аутентификации.
+    Анализирует матчи игроков и выявляет различные паттерны поведения (триггеры).
+    """
     try:
+        logger.info("🔍 Запуск публичного анализа триггеров...")
         service = MatchAnalysisService(db)
         result = await service.analyze_triggers(request)
+        logger.info("✅ Анализ триггеров завершен успешно")
         return result
         
     except Exception as e:
@@ -200,29 +212,6 @@ async def get_player_triggers(
         
     except Exception as e:
         logger.error(f"Ошибка при получении триггеров: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка при получении данных: {str(e)}")
-
-@router.get("/matches", response_model=List[MatchResponse])
-async def get_matches(
-    skip: int = 0,
-    limit: int = 100,
-    player_id: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    """Получение списка матчей"""
-    try:
-        query = db.query(Match)
-        
-        if player_id:
-            query = query.filter(
-                (Match.player1_id == player_id) | (Match.player2_id == player_id)
-            )
-        
-        matches = query.order_by(Match.date.desc()).offset(skip).limit(limit).all()
-        return matches
-        
-    except Exception as e:
-        logger.error(f"Ошибка при получении матчей: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Ошибка при получении данных: {str(e)}")
 
 @router.get("/triggers", response_model=List[TriggerResponse])
@@ -306,3 +295,85 @@ async def deactivate_trigger(
     except Exception as e:
         logger.error(f"Ошибка при деактивации триггера: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Ошибка при обновлении данных: {str(e)}")
+
+@router.get("/all-matches", response_model=List[dict])
+async def get_all_matches(
+    limit: Optional[int] = 100,
+    offset: Optional[int] = 0,
+    db: Session = Depends(get_db)
+):
+    """
+    Получение всех матчей из базы данных
+    
+    Публичный эндпоинт - доступен всем пользователям без аутентификации.
+    Возвращает список всех матчей с подробной информацией об игроках.
+    """
+    try:
+        logger.info(f"📋 Запрос матчей: limit={limit}, offset={offset}")
+        
+        # Получаем матчи с информацией об игроках
+        matches = db.query(Match).offset(offset).limit(limit).all()
+        
+        result = []
+        for match in matches:
+            # Получаем информацию об игроках
+            player1 = db.query(Player).filter(Player.id == match.player1_id).first()
+            player2 = db.query(Player).filter(Player.id == match.player2_id).first()
+            winner = None
+            if match.winner_id:
+                winner = db.query(Player).filter(Player.id == match.winner_id).first()
+            
+            match_dict = {
+                'id': match.id,
+                'date': match.date.strftime('%Y-%m-%d') if match.date else '',
+                'time': match.time.strftime('%H:%M') if match.time else None,
+                'player1': player1.full_name if player1 else 'Неизвестен',
+                'player2': player2.full_name if player2 else 'Неизвестен',
+                'player1_id': match.player1_id,
+                'player2_id': match.player2_id,
+                'score': match.score or '',
+                'sets_player1': match.sets_player1 or 0,
+                'sets_player2': match.sets_player2 or 0,
+                'winner': winner.full_name if winner else 'Ничья',
+                'winner_id': match.winner_id,
+                'tournament': '',  # Будет добавлено позже из League
+                'stage': match.stage or '',
+                'is_final': match.is_final or False,
+                'is_semifinal': match.is_semifinal or False,
+                'created_at': match.created_at.isoformat() if match.created_at else ''
+            }
+            
+            # Добавляем информацию о турнире/лиге если есть
+            if match.league_id:
+                from app.models.match import League
+                league = db.query(League).filter(League.id == match.league_id).first()
+                if league:
+                    match_dict['tournament'] = league.name
+            
+            result.append(match_dict)
+        
+        logger.info(f"✅ Найдено матчей: {len(result)}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении матчей: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении матчей: {str(e)}")
+
+@router.get("/ping")
+async def ping():
+    """
+    Тестовый эндпоинт для проверки доступности API
+    
+    Публичный эндпоинт - доступен всем без аутентификации.
+    Используется для проверки, что API работает и доступно.
+    """
+    return {
+        "message": "API Match Analysis доступно", 
+        "status": "ok",
+        "endpoints": {
+            "upload": "/api/v1/match-analysis/upload-excel",
+            "analyze": "/api/v1/match-analysis/analyze", 
+            "matches": "/api/v1/match-analysis/all-matches",
+            "ping": "/api/v1/match-analysis/ping"
+        }
+    }
