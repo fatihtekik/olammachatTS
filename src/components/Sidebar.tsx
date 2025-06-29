@@ -39,6 +39,14 @@ const Sidebar: React.FC = () => {
           <i className="bi bi-file-earmark-excel"></i>
           <span>Загрузка Excel</span>
         </Link>
+        
+        <Link 
+          to="/match-analysis" 
+          className={`nav-item ${isActive('/match-analysis') ? 'active' : ''}`}
+        >
+          <i className="bi bi-graph-up-arrow"></i>
+          <span>Анализ матчей</span>
+        </Link>
       </nav>
     </aside>
   );

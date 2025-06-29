@@ -4,6 +4,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel, create_engine, Session
 import logging
 
+# Импортируем все модели для создания таблиц
+from app.models.user import User
+from app.models.chat import ChatSession, ChatMessage
+from app.models.match import (
+    Player, PlayerStats, League, Match, MatchSet, 
+    MatchCriticalMoment, PlayerTrigger, PlayerPeriodStats, 
+    PlayerRatingHistory, Holiday, TriggerConfiguration
+)
+
 # Упрощенная версия - используем SQLite напрямую
 SQLALCHEMY_DATABASE_URL = "sqlite:///./ollamachat.db"
 
