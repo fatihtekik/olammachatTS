@@ -1,0 +1,307 @@
+.excel-upload-page {
+  padding: 40px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.upload-header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.upload-header h1 {
+  font-size: 2.5rem;
+  color: #333;
+  margin-bottom: 10px;
+  font-weight: 700;
+}
+
+.upload-header p {
+  font-size: 1.1rem;
+  color: #666;
+  margin: 0;
+}
+
+.upload-section {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.drop-zone {
+  border: 3px dashed #d1d5db;
+  border-radius: 12px;
+  padding: 60px 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: #fafafa;
+  margin-bottom: 40px;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-over {
+  border-color: #667eea;
+  background: #f0f4ff;
+  transform: translateY(-2px);
+}
+
+.file-input {
+  display: none;
+}
+
+.upload-icon {
+  font-size: 4rem;
+  color: #667eea;
+  margin-bottom: 20px;
+}
+
+.drop-zone h3 {
+  font-size: 1.5rem;
+  color: #333;
+  margin-bottom: 10px;
+}
+
+.drop-zone p {
+  color: #666;
+  margin-bottom: 20px;
+}
+
+.supported-formats {
+  font-size: 0.9rem;
+  color: #888;
+  background: #f3f4f6;
+  display: inline-block;
+  padding: 8px 16px;
+  border-radius: 20px;
+}
+
+.processing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #667eea;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 20px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.help-section {
+  background: white;
+  border-radius: 12px;
+  padding: 30px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.help-section h3 {
+  font-size: 1.3rem;
+  color: #333;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.help-content {
+  display: grid;
+  gap: 20px;
+}
+
+.help-item {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.help-item i {
+  font-size: 1.5rem;
+  color: #667eea;
+  margin-top: 4px;
+}
+
+.help-item h4 {
+  margin: 0 0 8px 0;
+  color: #333;
+  font-size: 1.1rem;
+}
+
+.help-item p {
+  margin: 0;
+  color: #666;
+  line-height: 1.5;
+}
+
+.download-example-btn {
+  margin-top: 12px;
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: opacity 0.2s ease;
+}
+
+.download-example-btn:hover {
+  opacity: 0.9;
+}
+
+.error-message {
+  background: #fef2f2;
+  color: #dc2626;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid #fecaca;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.error-message i {
+  font-size: 1.2rem;
+}
+
+.data-preview-section {
+  margin-top: 20px;
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.preview-header h2 {
+  margin: 0;
+  color: #333;
+  font-size: 1.5rem;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.analyze-all-btn,
+.reset-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: opacity 0.2s ease;
+}
+
+.analyze-all-btn {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+}
+
+.reset-btn {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+}
+
+.analyze-all-btn:hover,
+.reset-btn:hover {
+  opacity: 0.9;
+}
+
+.data-table-container {
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.data-table th {
+  background: #f9fafb;
+  font-weight: 600;
+  color: #374151;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.data-table td {
+  color: #4b5563;
+}
+
+.data-table tbody tr:hover {
+  background: #f9fafb;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .excel-upload-page {
+    padding: 20px;
+  }
+  
+  .upload-header h1 {
+    font-size: 2rem;
+  }
+  
+  .drop-zone {
+    padding: 40px 20px;
+  }
+  
+  .help-section {
+    padding: 20px;
+  }
+  
+  .preview-header {
+    flex-direction: column;
+    gap: 16px;
+    align-items: stretch;
+    text-align: center;
+  }
+  
+  .preview-actions {
+    justify-content: center;
+  }
+  
+  .data-table-container {
+    overflow-x: scroll;
+  }
+  
+  .data-table {
+    min-width: 800px;
+  }
+}

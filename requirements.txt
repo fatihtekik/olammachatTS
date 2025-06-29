@@ -1,0 +1,6 @@
+fastapi>=0.68.0
+uvicorn>=0.15.0
+sqlalchemy
+# Add other dependencies your project might need below
+# python-dotenv
+# pymongo

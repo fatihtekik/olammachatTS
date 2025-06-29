@@ -1,32 +1,23 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="Ollama Chat application"
+    />
+    <link rel="apple-touch-icon" href="/logo192.png" />
+    <!-- Добавляем Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="manifest" href="/manifest.json" />
     <title>Ollama Chat</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-    <div class="chat-container">
-        <div class="chat-header">
-            <h1>Ollama Chat</h1>
-            <div class="model-selector">
-                <label for="model">Model:</label>
-                <select id="model">
-                    <option value="llama2">Llama 2</option>
-                    <option value="mistral">Mistral</option>
-                    <option value="phi">Phi</option>
-                    <!-- Add more models as needed -->
-                </select>
-            </div>
-        </div>
-        <div class="chat-history" id="chatHistory"></div>
-        <div class="chat-input">
-            <textarea id="userInput" placeholder="Type your message here..."></textarea>
-            <button id="sendButton">Send</button>
-            <button id="clearButton">Clear History</button>
-        </div>
-    </div>
-    <script src="script.js"></script>
-</body>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
 </html>

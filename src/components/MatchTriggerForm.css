@@ -1,0 +1,101 @@
+.match-trigger-form-modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.match-trigger-form {
+  background: #fff;
+  border-radius: 10px;
+  padding: 2rem;
+  min-width: 320px;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.15);
+  position: relative;
+}
+.match-trigger-form h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+.match-trigger-form input {
+  display: block;
+  width: 100%;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  font-size: 1rem;
+}
+.match-trigger-form button[type="submit"] {
+  width: 100%;
+  padding: 0.7rem;
+  background: #007bff;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+.match-trigger-form .close-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+/* Новые стили для результатов */
+.loading {
+  text-align: center;
+  margin: 1rem 0;
+  color: #007bff;
+}
+
+.error-message {
+  margin-top: 1rem;
+  padding: 0.5rem;
+  color: #721c24;
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+  border-radius: 5px;
+}
+
+.trigger-result {
+  margin-top: 1.5rem;
+  border-top: 1px solid #eee;
+  padding-top: 1.5rem;
+}
+
+.result-section {
+  margin-bottom: 1.5rem;
+}
+
+.result-section h4 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  color: #333;
+}
+
+.context-box, .ollama-response {
+  padding: 1rem;
+  border-radius: 5px;
+  background-color: #f8f9fa;
+  border: 1px solid #eee;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.context-box {
+  border-left: 3px solid #28a745;
+}
+
+.ollama-response {
+  border-left: 3px solid #007bff;
+}
