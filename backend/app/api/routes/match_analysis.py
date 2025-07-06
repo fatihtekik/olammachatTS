@@ -8,7 +8,7 @@ from app.schemas.match_analysis import (
     PlayerResponse, MatchResponse, TriggerResponse,
     UpdateStatsRequest
 )
-from app.models.match import Player, Match, PlayerTrigger
+from app.models.match import Player, Match, PlayerTrigger, PlayerStats
 import pandas as pd
 import io
 import logging
@@ -374,6 +374,222 @@ async def ping():
             "upload": "/api/v1/match-analysis/upload-excel",
             "analyze": "/api/v1/match-analysis/analyze", 
             "matches": "/api/v1/match-analysis/all-matches",
+            "analyze-database": "/api/v1/match-analysis/analyze-database",
+            "triggers": "/api/v1/match-analysis/triggers",
+            "players": "/api/v1/match-analysis/players",
             "ping": "/api/v1/match-analysis/ping"
         }
+    }
+
+@router.post("/analyze-database")
+async def analyze_database_matches(
+    request: AnalysisRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Анализ матчей из базы данных на предмет триггеров
+    
+    Публичный эндпоинт для анализа существующих матчей в базе данных.
+    Выявляет различные триггеры и проблемные паттерны в игре игроков.
+    """
+    logger.info("🔍 Запуск анализа матчей из базы данных...")
+    
+    try:
+        service = MatchAnalysisService(db)
+        result = await service.analyze_triggers(request)
+        
+        logger.info(f"✅ Анализ завершен. Найдено триггеров: {result.triggers_found}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при анализе базы данных: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при анализе: {str(e)}")
+
+@router.get("/triggers")
+async def get_all_triggers(
+    player_id: Optional[str] = None,
+    trigger_type: Optional[str] = None,
+    severity_level: Optional[int] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Получение списка всех триггеров с фильтрацией
+    
+    Публичный эндпоинт для получения триггеров с возможностью фильтрации
+    по игроку, типу триггера и уровню серьезности.
+    """
+    logger.info(f"📊 Получение триггеров с фильтрами: player_id={player_id}, type={trigger_type}, severity={severity_level}")
+    
+    try:
+        query = db.query(PlayerTrigger).join(Player)
+        
+        if player_id:
+            query = query.filter(PlayerTrigger.player_id == player_id)
+        
+        if trigger_type:
+            query = query.filter(PlayerTrigger.trigger_type == trigger_type)
+            
+        if severity_level:
+            query = query.filter(PlayerTrigger.severity_level == severity_level)
+        
+        triggers = query.order_by(PlayerTrigger.created_at.desc()).limit(limit).all()
+        
+        result = []
+        for trigger in triggers:
+            player = db.query(Player).filter(Player.id == trigger.player_id).first()
+            
+            trigger_dict = {
+                'id': trigger.id,
+                'player_id': trigger.player_id,
+                'player_name': player.full_name if player else 'Неизвестный игрок',
+                'player_rating': player.current_rating if player else None,
+                'trigger_type': trigger.trigger_type,
+                'trigger_subtype': trigger.trigger_subtype,
+                'trigger_value': trigger.trigger_value,
+                'severity_level': trigger.severity_level,
+                'period_start': trigger.period_start,
+                'period_end': trigger.period_end,
+                'is_active': trigger.is_active,
+                'trigger_metadata': trigger.trigger_metadata,
+                'created_at': trigger.created_at
+            }
+            result.append(trigger_dict)
+        
+        logger.info(f"✅ Найдено триггеров: {len(result)}")
+        return {
+            "triggers": result,
+            "count": len(result),
+            "filters_applied": {
+                "player_id": player_id,
+                "trigger_type": trigger_type,
+                "severity_level": severity_level,
+                "limit": limit
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении триггеров: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении триггеров: {str(e)}")
+
+@router.get("/players")
+async def get_all_players(
+    limit: int = 100,
+    include_stats: bool = True,
+    db: Session = Depends(get_db)
+):
+    """
+    Получение списка всех игроков с их статистикой
+    
+    Публичный эндпоинт для получения списка игроков
+    с возможностью включения статистики.
+    """
+    logger.info(f"👥 Получение списка игроков (limit={limit}, include_stats={include_stats})")
+    
+    try:
+        players = db.query(Player).limit(limit).all()
+        
+        result = []
+        for player in players:
+            player_dict = {
+                'id': player.id,
+                'full_name': player.full_name,
+                'current_rating': player.current_rating,
+                'created_at': player.created_at,
+                'updated_at': player.updated_at
+            }
+            
+            if include_stats:
+                stats = db.query(PlayerStats).filter(PlayerStats.player_id == player.id).first()
+                if stats:
+                    player_dict['stats'] = {
+                        'matches_played': stats.matches_played,
+                        'wins': stats.wins,
+                        'losses': stats.losses,
+                        'draws': stats.draws,
+                        'win_percentage': stats.win_percentage,
+                        'sets_won': stats.sets_won,
+                        'sets_lost': stats.sets_lost,
+                        'last_updated': stats.last_updated
+                    }
+                else:
+                    player_dict['stats'] = None
+            
+            result.append(player_dict)
+        
+        logger.info(f"✅ Найдено игроков: {len(result)}")
+        return {
+            "players": result,
+            "count": len(result)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении игроков: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении игроков: {str(e)}")
+
+@router.get("/trigger-types")
+async def get_trigger_types():
+    """
+    Получение списка доступных типов триггеров
+    
+    Публичный эндпоинт для получения всех типов триггеров,
+    которые может анализировать система.
+    """
+    trigger_types = {
+        "defeat_0_3": {
+            "name": "Поражения 0:3",
+            "description": "Анализ частых поражений со счетом 0:3",
+            "severity": "Высокая"
+        },
+        "won_2_lost_3rd_set": {
+            "name": "Выиграл 2 сета, проиграл 3-й",
+            "description": "Проблемы с завершением матчей после ведения 2:0",
+            "severity": "Высокая"
+        },
+        "early_final_exit_advanced": {
+            "name": "Досрочный выход из финала",
+            "description": "Плохая игра в финальных матчах",
+            "severity": "Высокая"
+        },
+        "led_1_set_lost_match": {
+            "name": "Вёл 1 сет и проиграл",
+            "description": "Неспособность удержать преимущество",
+            "severity": "Средняя"
+        },
+        "led_2_sets_lost_match": {
+            "name": "Вёл 2 сета и проиграл",
+            "description": "Критические проблемы с удержанием большого преимущества",
+            "severity": "Критическая"
+        },
+        "psychological_breakdown": {
+            "name": "Психологические срывы",
+            "description": "Комбинированный анализ психологических проблем",
+            "severity": "Высокая"
+        },
+        "comeback_inability": {
+            "name": "Неспособность к камбекам",
+            "description": "Проблемы с отыгрыванием отставания",
+            "severity": "Средняя"
+        },
+        "pressure_situations": {
+            "name": "Игра под давлением",
+            "description": "Плохие результаты в важных матчах",
+            "severity": "Высокая"
+        },
+        "losing_streaks": {
+            "name": "Серии поражений",
+            "description": "Анализ длительных серий поражений",
+            "severity": "Средняя"
+        },
+        "top_performers": {
+            "name": "Топ игроки",
+            "description": "Выявление лучших игроков периода",
+            "severity": "Позитивная"
+        }
+    }
+    
+    return {
+        "trigger_types": trigger_types,
+        "count": len(trigger_types),
+        "message": "Доступные типы триггеров для анализа"
     }

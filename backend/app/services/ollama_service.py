@@ -1,4 +1,16 @@
-"""Сервис для работы с Ollama API"""
+"""
+🤖 СЕРВИС ДЛЯ РАБОТЫ С OLLAMA API 
+
+Это основной файл, который общается с Ollama сервером.
+Здесь происходит вся магия:
+- Отправка сообщений в модели ИИ
+- Получение ответов (в том числе потоковых)
+- Проверка доступности моделей
+- Обработка ошибок
+
+ДЛЯ ЧАЙНИКОВ: если модель не отвечает или выдает ошибки, 
+проблема скорее всего здесь или в настройках Ollama.
+"""
 import re
 from typing import List, Dict, Any, Optional
 import httpx
@@ -12,26 +24,43 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Большие модели, требующие особого подхода
+# 🐘 Большие модели, которые загружаются долго (можете добавить свои)
 LARGE_MODELS = ['deepseek', 'llama3-70b', 'mixtral-8x7b', 'qwen', 'solar-10b']
 
 def is_large_model(model_name: str) -> bool:
-    """Проверка, является ли модель "большой" и требующей особого подхода"""
+    """
+    🔍 Проверяет, большая ли модель (требует больше времени на загрузку)
+    
+    Для чайников: большие модели могут загружаться 5-10 минут!
+    Если ваша модель тормозит, добавьте её в список LARGE_MODELS выше.
+    """
     return any(name.lower() in model_name.lower() for name in LARGE_MODELS)
 
 def convert_messages_to_prompt(messages: List[Dict[str, str]]) -> str:
+    """
+    📝 Преобразует список сообщений в один текст (промпт) для модели
+    
+    Модели Ollama лучше понимают, когда им объясняешь кто они такие.
+    Здесь мы говорим модели, что она эксперт по настольному теннису.
+    
+    Для чайников: хотите изменить поведение ИИ? Поменяйте system_intro ниже!
+    """
 
     print("OLLAMA: Преобразование сообщений в промпт")
+    
+    # 🏓 ЗДЕСЬ МОЖНО ИЗМЕНИТЬ РОЛЬ ИИ! 
+    # Например, сделать экспертом по футболу, программированию и т.д.
     system_intro = "Ты — эксперт по настольному теннису. Ты анализируешь матчи, даёшь советы игрокам, делаешь прогнозы, описываешь сильные и слабые стороны спортсменов, и помогаешь лучше понимать игру."
     
     prompt = f"[SYSTEM]: {system_intro}\n\n"
     
+    # Собираем все сообщения в один текст
     for msg in messages:
         role = msg.get("role", "").lower()
         content = msg.get("content", "")
         
         if role == "system":
-            continue
+            continue  # Системные сообщения уже добавили выше
         elif role == "user":
             prompt += f"[USER]: {content}\n\n"
         elif role == "assistant":
@@ -39,6 +68,7 @@ def convert_messages_to_prompt(messages: List[Dict[str, str]]) -> str:
         else:
             prompt += f"{content}\n\n"
     
+    # Если последнее сообщение от пользователя, подготавливаем ответ ИИ
     if messages and messages[-1]["role"].lower() == "user":
         prompt += "[ASSISTANT]: "
     
@@ -46,7 +76,15 @@ def convert_messages_to_prompt(messages: List[Dict[str, str]]) -> str:
     
 
 async def send_generate_request(model: str, prompt: str) -> str:
-    """Отправляет запрос через эндпоинт /api/generate"""    # Таймаут для больших моделей
+    """
+    🚀 Отправляет запрос через старый эндпоинт /api/generate
+    
+    Для чайников: есть два способа общения с Ollama:
+    1. /api/generate (этот метод) - простой, но может тормозить
+    2. /api/chat (используется в send_streaming_message) - быстрый, с потоком
+    """
+    
+    # ⏱️ Таймаут для больших моделей (они дольше думают)
     is_model_large = is_large_model(model)
     timeout_duration = 1000 if is_model_large else 180  # секунды
     
@@ -595,7 +633,7 @@ def trigger(data: dict) -> str:
 {{
 "player_1": "{игрок_1}",
 "player_2": "{игрок_2}",
-"score": "{счёт}",
+"score": "{счёт}" ,
 "league": "{лига}",
 "analysis": "Аналитический разбор: кто был сильнее, где были триггеры, почему победил или проиграл"
 }}

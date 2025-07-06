@@ -1,140 +1,439 @@
 import React, { useState, useEffect } from 'react';
 import './AnalysisPage.css';
 
-interface AnalysisData {
+interface Trigger {
   id: string;
-  matchInfo: string;
-  player1: string;
-  player2: string;
-  score: string;
-  tournament: string;
-  stage: string;
-  createdAt: Date;
-  analysisText: string;
+  player_id: string;
+  player_name: string;
+  player_rating?: number;
+  trigger_type: string;
+  trigger_subtype?: string;
+  trigger_value: string;
+  severity_level: number;
+  period_start: string;
+  period_end: string;
+  is_active: boolean;
+  trigger_metadata?: any;
+  created_at: string;
+  player_stats?: {
+    matches_played: number;
+    wins: number;
+    losses: number;
+    win_rate: number;
+    sets_won: number;
+    sets_lost: number;
+    recent_form: string;
+    recent_matches?: Array<{
+      date: string;
+      opponent: string;
+      result: 'W' | 'L';
+      score: string;
+      time?: string;
+    }>;
+  };
+}
+
+interface Player {
+  id: string;
+  full_name: string;
+  current_rating?: number;
+  stats?: {
+    matches_played: number;
+    wins: number;
+    losses: number;
+    win_percentage: number;
+    sets_won: number;
+    sets_lost: number;
+  };
+}
+
+interface AnalysisResult {
+  period_start: string;
+  period_end: string;
+  total_players: number;
+  total_matches: number;
+  triggers_found: number;
+  top_performers: any[];
+  problem_players: any[];
+  triggers: Trigger[];
 }
 
 const AnalysisPage: React.FC = () => {
-  const [analyses, setAnalyses] = useState<AnalysisData[]>([]);
+  const [analysisMode, setAnalysisMode] = useState<'upload' | 'database'>('upload');
   const [loading, setLoading] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
+  const [periodStart, setPeriodStart] = useState<string>('');
+  const [periodEnd, setPeriodEnd] = useState<string>('');
+  const [triggerFilter, setTriggerFilter] = useState<string>('');
+  
+  const triggerTypes = [
+    { id: 'defeat_0_3', name: 'Поражения 0:3', severity: 'high' },
+    { id: 'won_2_lost_3rd_set', name: 'Выиграл 2 сета, проиграл 3-й', severity: 'high' },
+    { id: 'early_final_exit_advanced', name: 'Досрочный выход из финала', severity: 'high' },
+    { id: 'led_1_set_lost_match', name: 'Вёл 1 сет и проиграл', severity: 'medium' },
+    { id: 'led_2_sets_lost_match', name: 'Вёл 2 сета и проиграл', severity: 'critical' },
+    { id: 'psychological_breakdown', name: 'Психологические срывы', severity: 'high' },
+    { id: 'comeback_inability', name: 'Неспособность к камбекам', severity: 'medium' },
+    { id: 'pressure_situations', name: 'Игра под давлением', severity: 'high' },
+    { id: 'losing_streaks', name: 'Серии поражений', severity: 'medium' },
+    { id: 'top_performers', name: 'Топ игроки', severity: 'positive' }
+  ];
 
   useEffect(() => {
-    loadRecentAnalyses();
+    loadPlayers();
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - 3);
+    
+    setPeriodEnd(endDate.toISOString().split('T')[0]);
+    setPeriodStart(startDate.toISOString().split('T')[0]);
   }, []);
 
-  const loadRecentAnalyses = async () => {
+  const loadPlayers = async () => {
+    try {
+      const response = await fetch('/api/v1/match-analysis/players');
+      if (response.ok) {
+        const data = await response.json();
+        setPlayers(data.players || []);
+      }
+    } catch (error) {
+      console.error('Error loading players:', error);
+    }
+  };
+
+  const analyzeDatabase = async () => {
+    if (!periodStart || !periodEnd) {
+      alert('Пожалуйста, выберите период анализа');
+      return;
+    }
+
     setLoading(true);
     try {
-      // TODO: Заменить на реальный API запрос к бэкенду
-      // Пока используем mock данные
-      const mockAnalyses: AnalysisData[] = [
-        {
-          id: '1',
-          matchInfo: 'Анализ матча: Иванов И. (1850) vs Петров П. (1920)',
-          player1: 'Иванов И.',
-          player2: 'Петров П.',
-          score: '2:1',
-          tournament: 'Открытый турнир',
-          stage: 'Полуфинал',
-          createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 часа назад
-          analysisText: 'Матч показал интересную динамику. Несмотря на более низкий рейтинг, Иванов смог одержать победу...'
+      const requestBody = {
+        period_start: periodStart,
+        period_end: periodEnd,
+        player_ids: selectedPlayers.length > 0 ? selectedPlayers : undefined
+      };
+
+      const response = await fetch('http://localhost:8000/api/v1/match-analysis/analyze-database', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        {
-          id: '2',
-          matchInfo: 'Анализ матча: Сидоров С. (2100) vs Козлов К. (2050)',
-          player1: 'Сидоров С.',
-          player2: 'Козлов К.',
-          score: '3:0',
-          tournament: 'Чемпионат лиги',
-          stage: 'Финал',
-          createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000), // 5 часов назад
-          analysisText: 'Убедительная победа фаворита. Сидоров продемонстрировал стабильную игру на всех этапах матча...'
-        },
-        {
-          id: '3',
-          matchInfo: 'Анализ матча: Новиков Н. (1750) vs Волков В. (1800)',
-          player1: 'Новиков Н.',
-          player2: 'Волков В.',
-          score: '1:3',
-          tournament: 'Кубок города',
-          stage: 'Четвертьфинал',
-          createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000), // 1 день назад
-          analysisText: 'Матч прошёл в соответствии с прогнозами. Волков использовал своё преимущество в рейтинге...'
-        }
-      ];
-      
-      setAnalyses(mockAnalyses);
+        body: JSON.stringify(requestBody)
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        setAnalysisResult(result);
+      } else {
+        const error = await response.json();
+        alert(`Ошибка анализа: ${error.detail}`);
+      }
     } catch (error) {
-      console.error('Error loading analyses:', error);
+      console.error('Error analyzing database:', error);
+      alert('Ошибка при анализе базы данных');
     } finally {
       setLoading(false);
     }
   };
 
-  const formatTimeAgo = (date: Date) => {
-    const now = new Date();
-    const diffInHours = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60));
-    
-    if (diffInHours < 1) {
-      return 'Меньше часа назад';
-    } else if (diffInHours < 24) {
-      return `${diffInHours} ${diffInHours === 1 ? 'час' : diffInHours < 5 ? 'часа' : 'часов'} назад`;
-    } else {
-      const diffInDays = Math.floor(diffInHours / 24);
-      return `${diffInDays} ${diffInDays === 1 ? 'день' : diffInDays < 5 ? 'дня' : 'дней'} назад`;
+  const handlePlayerToggle = (playerId: string) => {
+    setSelectedPlayers(prev => 
+      prev.includes(playerId) 
+        ? prev.filter(id => id !== playerId)
+        : [...prev, playerId]
+    );
+  };
+
+  const getSeverityColor = (severity: number) => {
+    switch (severity) {
+      case 1: return '#28a745'; // green - low
+      case 2: return '#ffc107'; // yellow - medium  
+      case 3: return '#dc3545'; // red - high
+      default: return '#6c757d'; // gray - unknown
     }
+  };
+
+  const getSeverityText = (severity: number) => {
+    switch (severity) {
+      case 1: return 'Низкая';
+      case 2: return 'Средняя';
+      case 3: return 'Высокая';
+      default: return 'Неизвестно';
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('ru-RU');
   };
 
   return (
     <div className="analysis-page">
       <div className="analysis-header">
-        <h1>Последние анализы матчей</h1>
-        <p>Обзор недавно проанализированных игр</p>
+        <h1>Анализ матчей</h1>
+        <div className="mode-selector">
+          <button 
+            className={`mode-btn ${analysisMode === 'upload' ? 'active' : ''}`}
+            onClick={() => setAnalysisMode('upload')}
+          >
+            Загрузка Excel
+          </button>
+          <button 
+            className={`mode-btn ${analysisMode === 'database' ? 'active' : ''}`}
+            onClick={() => setAnalysisMode('database')}
+          >
+            Анализ базы данных
+          </button>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="loading-container">
-          <div className="spinner"></div>
-          <p>Загрузка анализов...</p>
+      {analysisMode === 'upload' ? (
+        <div className="upload-section">
+          <div className="upload-card">
+            <i className="bi bi-file-earmark-excel"></i>
+            <h3>Загрузить Excel файл</h3>
+            <p>Загрузите файл с матчами для анализа триггеров</p>
+            <button className="upload-btn">
+              <i className="bi bi-upload"></i>
+              Выбрать файл
+            </button>
+          </div>
         </div>
       ) : (
-        <div className="analyses-grid">
-          {analyses.length === 0 ? (
-            <div className="empty-state">
-              <i className="bi bi-clipboard-data"></i>
-              <h3>Анализы не найдены</h3>
-              <p>Перейдите в чат или загрузите Excel файл для создания первого анализа</p>
+        <div className="database-analysis-section">
+          <div className="analysis-controls">
+            <div className="control-group">
+              <label>Период анализа:</label>
+              <div className="date-range">
+                <input
+                  type="date"
+                  value={periodStart}
+                  onChange={(e) => setPeriodStart(e.target.value)}
+                />
+                <span>до</span>
+                <input
+                  type="date"
+                  value={periodEnd}
+                  onChange={(e) => setPeriodEnd(e.target.value)}
+                />
+              </div>
             </div>
-          ) : (
-            analyses.map((analysis) => (
-              <div key={analysis.id} className="analysis-card">
-                <div className="analysis-card-header">
-                  <h3>{analysis.player1} vs {analysis.player2}</h3>
-                  <span className="analysis-time">{formatTimeAgo(analysis.createdAt)}</span>
-                </div>
-                
-                <div className="analysis-card-info">
-                  <div className="match-details">
-                    <span className="score">{analysis.score}</span>
-                    <span className="tournament">{analysis.tournament}</span>
-                    <span className="stage">{analysis.stage}</span>
+
+            <div className="control-group">
+              <label>Игроки (оставьте пустым для анализа всех):</label>
+              <div className="players-selection">
+                {players.slice(0, 10).map(player => (
+                  <label key={player.id} className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={selectedPlayers.includes(player.id)}
+                      onChange={() => handlePlayerToggle(player.id)}
+                    />
+                    {player.full_name} {player.current_rating && `(${player.current_rating})`}
+                  </label>
+                ))}
+                {players.length > 10 && (
+                  <p className="players-note">Показаны первые 10 игроков. Всего в базе: {players.length}</p>
+                )}
+              </div>
+            </div>
+
+            <button 
+              className="analyze-btn"
+              onClick={analyzeDatabase}
+              disabled={loading}
+            >
+              {loading ? (
+                <>
+                  <div className="spinner-small"></div>
+                  Анализируем...
+                </>
+              ) : (
+                <>
+                  <i className="bi bi-search"></i>
+                  Анализировать
+                </>
+              )}
+            </button>
+          </div>
+
+          {analysisResult && (
+            <div className="analysis-results">
+              <div className="results-summary">
+                <h3>Результаты анализа</h3>
+                <div className="summary-stats">
+                  <div className="stat-card">
+                    <span className="stat-number">{analysisResult.total_players}</span>
+                    <span className="stat-label">Игроков проанализировано</span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-number">{analysisResult.total_matches}</span>
+                    <span className="stat-label">Матчей за период</span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-number">{analysisResult.triggers_found}</span>
+                    <span className="stat-label">Триггеров найдено</span>
                   </div>
                 </div>
-                
-                <div className="analysis-preview">
-                  {analysis.analysisText.length > 150 
-                    ? analysis.analysisText.substring(0, 150) + '...'
-                    : analysis.analysisText
-                  }
-                </div>
-                
-                <div className="analysis-card-footer">
-                  <button className="view-details-btn">
-                    <i className="bi bi-eye"></i>
-                    Подробнее
-                  </button>
-                </div>
+                <p className="period-info">
+                  Период: {formatDate(analysisResult.period_start)} - {formatDate(analysisResult.period_end)}
+                </p>
               </div>
-            ))
+
+              {/* Фильтр триггеров */}
+              {analysisResult.triggers && analysisResult.triggers.length > 0 && (
+                <div className="triggers-filter">
+                  <label htmlFor="trigger-filter">Фильтр по типу триггера:</label>
+                  <select 
+                    id="trigger-filter"
+                    value={triggerFilter} 
+                    onChange={(e) => setTriggerFilter(e.target.value)}
+                    className="filter-select"
+                  >
+                    <option value="">Все триггеры</option>
+                    {triggerTypes.map(trigger => (
+                      <option key={trigger.id} value={trigger.id}>
+                        {trigger.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {analysisResult.triggers && analysisResult.triggers.length > 0 && (
+                <div className="triggers-section">
+                  <h4>Обнаруженные триггеры</h4>
+                  <div className="triggers-list">
+                    {analysisResult.triggers
+                      .filter(trigger => !triggerFilter || trigger.trigger_type === triggerFilter)
+                      .map(trigger => (
+                      <div key={trigger.id} className={`trigger-card ${trigger.trigger_type === 'top_performers' ? 'trigger-card-green' : 'trigger-card-red'}`}>
+                        <div className="player-badge">
+                          <span className="player-number">#{Math.floor(Math.random() * 99) + 1}</span>
+                        </div>
+                        
+                        <div className="player-info-section">
+                          <h3 className="player-name">{trigger.player_name} рейтинг: {trigger.player_rating || 'н/д'}</h3>
+                          
+                          <div className="stats-grid">
+                            <div className="stat-item">
+                              <span className="stat-label">Рейтинг:</span>
+                              <span className="stat-value">{trigger.player_rating || 1000}</span>
+                            </div>
+                            <div className="stat-item">
+                              <span className="stat-label">Побед:</span>
+                              <span className="stat-value">
+                                {trigger.player_stats ? 
+                                  `${trigger.player_stats.wins}/${trigger.player_stats.matches_played} (${trigger.player_stats.win_rate.toFixed(1)}%)` : 
+                                  '40/40 (100%)'
+                                }
+                              </span>
+                            </div>
+                            <div className="stat-item">
+                              <span className="stat-label">Сеты:</span>
+                              <span className="stat-value">
+                                {trigger.player_stats ? 
+                                  `${trigger.player_stats.sets_won}:${trigger.player_stats.sets_lost}` : 
+                                  '15:5'
+                                }
+                              </span>
+                            </div>
+                            <div className="stat-item">
+                              <span className="stat-label">Форма:</span>
+                              <div className="form-indicator">
+                                {trigger.player_stats && trigger.player_stats.recent_form ? 
+                                  trigger.player_stats.recent_form.split('').slice(0, 5).map((result, index) => (
+                                    <span key={index} className={result === 'W' ? 'form-win' : 'form-loss'}>
+                                      {result}
+                                    </span>
+                                  )) :
+                                  // Fallback для статических данных
+                                  ['W', 'W', 'W', 'W', 'W'].map((result, index) => (
+                                    <span key={index} className="form-win">{result}</span>
+                                  ))
+                                }
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Показываем последние матчи с временем */}
+                          {trigger.player_stats?.recent_matches && trigger.player_stats.recent_matches.length > 0 && (
+                            <div className="recent-matches">
+                              <h4>Последние матчи:</h4>
+                              <div className="matches-list">
+                                {trigger.player_stats.recent_matches.slice(0, 3).map((match, index) => (
+                                  <div key={index} className="match-item">
+                                    <span className="match-date">{match.date}</span>
+                                    <span className="match-opponent">{match.opponent}</span>
+                                    <span className={`match-result ${match.result === 'W' ? 'win' : 'loss'}`}>
+                                      {match.result}
+                                    </span>
+                                    <span className="match-score">{match.score}</span>
+                                    {match.time && <span className="match-time">{match.time}</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="analysis-text-section">
+                          <div className="trigger-type-badge">
+                            {triggerTypes.find(t => t.id === trigger.trigger_type)?.name || trigger.trigger_type}
+                          </div>
+                          
+                          <div className="analysis-text">
+                            <p><strong>Описание триггера:</strong> {trigger.trigger_value}</p>
+                            
+                            <div className="detailed-analysis">
+                              <p>
+                                ОЛГНЕПКАВПРОЛДЖИГРОНПЕКАВПРОЛШШТГПНЕКУВЫСНАЧСПРОГНШШТLНЕКАВЫСАРТОЛАДШИ
+                                ЛГНЕПКАВСМВИАЛЬОЛШГОНПЕКАВПРОШНЕПКАВУБСАЛНГНШНГЛАВПТЬРТЛДУТГОЦШИР
+                                ГШмнолЬнЬнчцеос
+                              </p>
+                              <p>
+                                чаролнщнеиехфЗанитголжщигронпекавннгфесамитрбойок.эжзжшцнневд
+                              </p>
+                            </div>
+
+                            {trigger.trigger_metadata && (
+                              <div className="metadata-info">
+                                <small>Создано: {formatDate(trigger.created_at)}</small>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Секция анализа ИИ теперь интегрирована в каждую карточку триггера */}
+
+              {analysisResult.top_performers && analysisResult.top_performers.length > 0 && (
+                <div className="top-performers-section">
+                  <h4>Лучшие игроки периода</h4>
+                  <div className="performers-list">
+                    {analysisResult.top_performers.map((performer, index) => (
+                      <div key={performer.id} className="performer-card">
+                        <div className="rank">#{index + 1}</div>
+                        <div className="performer-info">
+                          <h5>{performer.full_name}</h5>
+                          <div className="stats">
+                            <span>Побед: {performer.wins}%</span>
+                            <span>Матчей: {performer.matches_played}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}

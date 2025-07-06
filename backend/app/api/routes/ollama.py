@@ -1,51 +1,74 @@
+"""
+🛣️ МАРШРУТЫ ДЛЯ OLLAMA API
+
+Это файл определяет все HTTP эндпоинты (адреса) для работы с Ollama:
+- POST /chat - отправить сообщение модели
+- GET /models - получить список доступных моделей  
+- GET /status - проверить, работает ли Ollama
+
+ДЛЯ ЧАЙНИКОВ: если фронтенд не может отправить сообщение,
+проверьте, правильно ли работают эти эндпоинты в браузере:
+http://localhost:8000/api/v1/ollama/models
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, Body
 from typing import List, Dict, Optional
 from app.services.auth_service import get_current_active_user
 from app.services.ollama_service import (
     send_message,
-    send_streaming_message,
-    get_available_models,
-    test_connection,
+    send_streaming_message,  # 🌊 Потоковый режим - быстрее для больших моделей
+    get_available_models,    # 📋 Получение списка моделей из Ollama
+    test_connection,         # 🔌 Проверка соединения с Ollama
     trigger
 )
 from pydantic import BaseModel
 
-# Определение маршрута для Ollama API
+# 🎯 Создаем группу маршрутов для Ollama
 router = APIRouter(tags=["ollama"])
 
-# Схема для запроса чата
+# 📋 Схемы данных (что принимаем и отдаем)
+
 class ChatRequest(BaseModel):
-    model: str
-    messages: List[Dict[str, str]]
+    """📨 Что нам присылает фронтенд для чата"""
+    model: str                          # Какую модель использовать (например, "phi3")
+    messages: List[Dict[str, str]]      # История сообщений [{"role": "user", "content": "привет"}]
 
-# Схема для ответа от модели
 class ChatResponse(BaseModel):
-    content: str
-    model: str
+    """📤 Что мы отправляем обратно фронтенду"""
+    content: str                        # Ответ от модели ИИ
+    model: str                          # Какая модель ответила
 
-# Схема для моделей
 class OllamaModel(BaseModel):
-    id: str
-    name: str
+    """🤖 Информация о модели"""
+    id: str                             # Техническое имя модели (phi3, llama2, etc.)
+    name: str                           # Красивое имя для показа пользователю
+
+# 🔐 ВСЕ ЭНДПОИНТЫ ТРЕБУЮТ АВТОРИЗАЦИИ!
+# current_user = Depends(get_current_active_user) проверяет токен
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat_with_model(
     request: ChatRequest,
-    current_user = Depends(get_current_active_user)
+    current_user = Depends(get_current_active_user)  # 🔒 Только для авторизованных!
 ):
     """
-    Отправляет сообщение в модель Ollama и получает ответ.
-    Использует потоковый режим для оптимальной обработки ответов даже от больших моделей.
+    💬 ГЛАВНЫЙ ЭНДПОИНТ ДЛЯ ЧАТА С ИИ
+    
+    Принимает сообщения от фронтенда и отправляет их в Ollama.
+    Использует потоковый режим для быстрой работы.
+    
+    Для чайников: если чат не работает, проблема либо здесь, 
+    либо в ollama_service.py, либо Ollama не запущена.
     """
     try:
-        # Логируем входящий запрос для диагностики
+        # 📊 Логируем для отладки (смотрите в консоли бэкенда)
         print(f"🎯 Запрос к модели {request.model} от пользователя {current_user.username}")
         print(f"Количество сообщений в истории: {len(request.messages)}")
         
-        # Использование потокового режима для всех моделей для более стабильной работы
+        # 🌊 Используем потоковый режим - быстрее и надежнее!
         response = await send_streaming_message(model=request.model, messages=request.messages)
         
-        # Убедимся, что ответ не пустой
+        # 🚨 Проверяем, что модель что-то ответила
         if not response or response.strip() == "":
             print("ВНИМАНИЕ: Получен пустой ответ от модели!")
             response = "Модель вернула пустой ответ. Пожалуйста, попробуйте еще раз или выберите другую модель."
@@ -59,40 +82,47 @@ async def chat_with_model(
             model=request.model
         )
     except HTTPException as e:
-        # Прокидываем HTTPException дальше
+        # HTTP ошибки пробрасываем как есть (401, 404, 500 и т.д.)
         raise e
     except Exception as e:
-        # Остальные ошибки конвертируем в HTTP ошибки
+        # Все остальные ошибки превращаем в HTTP 500
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/models", response_model=List[OllamaModel])
 async def list_models(
-    current_user = Depends(get_current_active_user)
+    current_user = Depends(get_current_active_user)  # 🔒 Только для авторизованных!
 ):
     """
-    Получает список доступных моделей из локального Ollama
+    📋 ПОЛУЧЕНИЕ СПИСКА ДОСТУПНЫХ МОДЕЛЕЙ
+    
+    Фронтенд вызывает этот эндпоинт, чтобы показать пользователю 
+    какие модели можно выбрать в селекторе.
+    
+    Для чайников: если в селекторе моделей пусто, проблема здесь!
+    Проверьте, что Ollama запущена и в ней есть скачанные модели.
     """
     try:
         print(f"Получение списка моделей для пользователя: {current_user.username}")
         
-        # Сначала проверяем соединение с Ollama
+        # 🔌 Сначала проверяем, что Ollama вообще работает
         is_connected = await test_connection()
         if not is_connected:
             print("Нет соединения с Ollama API")
             raise HTTPException(status_code=503, 
                                detail="Cannot connect to Ollama API. Please make sure Ollama is running.")
         
+        # 📥 Получаем список моделей из Ollama
         models = await get_available_models()
         print(f"Найдено моделей: {len(models)}")
         
-        # Если моделей нет, возможно Ollama запущена, но нет загруженных моделей
+        # 🚨 Если моделей нет, подсказываем пользователю что делать
         if len(models) == 0:
             print("Модели не найдены, хотя Ollama доступна")
             return [{"id": "none", "name": "No models found. Use 'ollama pull MODEL_NAME' to download models."}]
         
         return models
     except HTTPException as e:
-        # Пробрасываем HTTP ошибки дальше
+        # HTTP ошибки пробрасываем дальше
         print(f"HTTP ошибка при получении списка моделей: {e}")
         raise e
     except Exception as e:
