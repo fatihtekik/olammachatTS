@@ -305,8 +305,10 @@
 }
 
 .triggers-list {
-  display: grid;
-  gap: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
 }
 
 .trigger-card {
@@ -446,6 +448,8 @@
   box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
   transition: all 0.3s ease;
   border-left: 6px solid #4CAF50;
+  width: 100%;
+  max-width: 100%;
 }
 
 .trigger-card-red {
@@ -456,6 +460,8 @@
   box-shadow: 0 4px 15px rgba(244, 67, 54, 0.3);
   transition: all 0.3s ease;
   border-left: 6px solid #f44336;
+  width: 100%;
+  max-width: 100%;
 }
 
 .trigger-card-green:hover {
@@ -779,4 +785,21 @@
 .match-time {
   color: #777;
   font-size: 0.75rem;
+}
+
+.ai-analysis {
+  margin-top: 15px;
+  padding: 15px;
+  background: rgba(102, 126, 234, 0.1);
+  border-radius: 8px;
+  border-left: 4px solid #667eea;
+}
+
+.ai-analysis p {
+  margin: 0 0 8px 0;
+  color: #333;
+}
+
+.ai-analysis p:last-child {
+  margin-bottom: 0;
 }

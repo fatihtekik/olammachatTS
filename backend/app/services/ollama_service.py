@@ -651,7 +651,7 @@ def trigger(data: dict) -> str:
 async def ollama_stream(prompt: str):
     async with httpx.AsyncClient(timeout=None) as client:
         async with client.stream("POST", "http://localhost:11434/api/chat", json={
-            "model": "tennistennis",  # ЗАМЕНИ НА НАЗВАНИЕ СВОЕЙ МОДЕЛИ КОТОРУЮ ТЫ НАЗВАЛ У СЕБЯ В OLLAMA
+            "model": "llama3.2:latest",  # ЗАМЕНИ НА НАЗВАНИЕ СВОЕЙ МОДЕЛИ КОТОРУЮ ТЫ НАЗВАЛ У СЕБЯ В OLLAMA
             "stream": True,
             "messages": [
                 {"role": "user", "content": prompt}

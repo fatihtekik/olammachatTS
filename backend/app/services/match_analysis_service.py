@@ -2,6 +2,8 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timedelta
 import re
 import os
+import httpx
+import json
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func, desc
 from app.models.match import (
@@ -21,6 +23,10 @@ class MatchAnalysisService:
     
     def __init__(self, db: Session):
         self.db = db
+        
+        # Добавляем функцию для ИИ-анализа
+        self._ai_analysis_enabled = True  # Флаг для включения/выключения ИИ
+        
         self.trigger_methods = {
             "top_performers": self._analyze_top_performers,
             "losers_50_percent": self._analyze_losers_50_percent,
@@ -559,7 +565,7 @@ class MatchAnalysisService:
         return problem_players
     
     async def _get_all_triggers(self, start_date: date, end_date: date) -> List[dict]:
-        """Получает все триггеры за период с детальной статистикой игроков"""
+        """Получает все триггеры за период с детальной статистикой игроков и ИИ-анализом"""
         triggers = self.db.query(PlayerTrigger).join(Player).filter(
             and_(
                 PlayerTrigger.period_start == start_date,
@@ -575,6 +581,14 @@ class MatchAnalysisService:
             # Получаем детальную статистику игрока
             player_stats = self._get_player_stats_for_trigger(trigger.player_id, start_date, end_date)
             
+            # Генерируем ИИ-анализ для триггера
+            ai_analysis = await self._generate_ai_analysis(
+                trigger.trigger_type,
+                player.full_name if player else 'Неизвестный игрок',
+                trigger.trigger_value,
+                player_stats or {}
+            )
+            
             trigger_dict = {
                 'id': trigger.id,
                 'player_id': trigger.player_id,
@@ -589,7 +603,8 @@ class MatchAnalysisService:
                 'is_active': trigger.is_active,
                 'trigger_metadata': trigger.trigger_metadata,
                 'created_at': trigger.created_at,
-                'player_stats': player_stats if player_stats else None
+                'player_stats': player_stats if player_stats else None,
+                'ai_analysis': ai_analysis  # ← Добавляем ИИ-анализ!
             }
             result.append(trigger_dict)
         
@@ -1411,7 +1426,7 @@ class MatchAnalysisService:
         
         self.db.commit()
         return triggers
-
+    
     async def _analyze_comeback_inability(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
         """Анализ неспособности совершать камбеки"""
         triggers = []
@@ -1754,6 +1769,81 @@ class MatchAnalysisService:
             "win_rate": win_rate,
             "sets_won": sets_won,
             "sets_lost": sets_lost,
-            "recent_form": ''.join(recent_form),
+            "recent_form": ''.join(recent_form),  # ← Преобразуем массив в строку
             "recent_matches": recent_matches
         }
+
+    async def _generate_ai_analysis(self, trigger_type: str, player_name: str, trigger_value: str, player_stats: Dict) -> str:
+        """Генерирует ИИ-анализ для триггера"""
+        if not self._ai_analysis_enabled:
+            return f"Анализ триггера {trigger_type} для игрока {player_name}"
+        
+        try:
+            # Создаем контекст для ИИ
+            prompt = self._create_analysis_prompt(trigger_type, player_name, trigger_value, player_stats)
+            
+            # Вызываем функцию стриминга из ollama_service
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                async with client.stream("POST", "http://localhost:11434/api/chat", json={
+                    "model": "llama3.2",  # ← ИЗМЕНИТЕ НА ВАШУ МОДЕЛЬ
+                    "stream": True,
+                    "messages": [
+                        {"role": "system", "content": "Ты профессиональный спортивный аналитик настольного тенниса. Дай краткий, но содержательный анализ проблемы игрока на русском языке."},
+                        {"role": "user", "content": prompt}
+                    ]
+                }) as response:
+                    analysis_text = ""
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            data = json.loads(line)
+                            if "message" in data and "content" in data["message"]:
+                                analysis_text += data["message"]["content"]
+                        except json.JSONDecodeError:
+                            continue
+                    
+                    return analysis_text if analysis_text.strip() else f"Анализ триггера {trigger_type} для игрока {player_name}"
+                    
+        except Exception as e:
+            logger.error(f"Ошибка генерации ИИ-анализа: {e}")
+            return f"Не удалось сгенерировать анализ для триггера {trigger_type}"
+    
+    def _create_analysis_prompt(self, trigger_type: str, player_name: str, trigger_value: str, player_stats: Dict) -> str:
+        """Создает промпт для ИИ-анализа"""
+        
+        # Описания триггеров
+        trigger_descriptions = {
+            "top_performers": "отличные результаты",
+            "defeat_0_3": "частые поражения 0:3",
+            "won_2_lost_3rd_set": "проигрыш после лидерства 2:0 по сетам",
+            "early_final_exit_advanced": "досрочный уход с корта в финалах",
+            "led_1_set_lost_match": "проигрыш после лидерства в счёте",
+            "led_2_sets_lost_match": "критический проигрыш после лидерства 2:0",
+            "psychological_breakdown": "психологические срывы",
+            "comeback_inability": "неспособность к камбекам",
+            "pressure_situations": "проблемы в важных матчах",
+            "losers_50_percent": "низкий процент побед"
+        }
+        
+        description = trigger_descriptions.get(trigger_type, trigger_type)
+        
+        wins = player_stats.get('wins', 0)
+        losses = player_stats.get('losses', 0)
+        win_rate = player_stats.get('win_rate', 0)
+        matches = player_stats.get('matches_played', 0)
+        recent_form = player_stats.get('recent_form', '')
+        
+        prompt = f"""
+Игрок: {player_name}
+Проблема: {description}
+Статистика за период:
+- Матчей сыграно: {matches}
+- Побед: {wins} ({win_rate:.1f}%)
+- Поражений: {losses}
+- Последняя форма: {recent_form}
+- Детали триггера: {trigger_value}
+
+Дай профессиональный анализ этой проблемы в 2-3 предложениях. Объясни возможные причины и дай рекомендации тренеру.
+"""
+        return prompt

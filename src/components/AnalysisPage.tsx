@@ -22,6 +22,7 @@ interface Trigger {
   is_active: boolean;
   trigger_metadata?: any;
   created_at: string;
+  ai_analysis?: string; // ← Добавляем поле для ИИ-анализа
   player_stats?: {
     matches_played: number;
     wins: number;
@@ -352,7 +353,11 @@ const AnalysisPage: React.FC = () => {
                               <span className="stat-label">Форма:</span>
                               <div className="form-indicator">
                                 {trigger.player_stats && trigger.player_stats.recent_form ? 
-                                  trigger.player_stats.recent_form.split('').slice(0, 5).map((result, index) => (
+                                  // Проверяем, массив это или строка и приводим к массиву
+                                  (Array.isArray(trigger.player_stats.recent_form) ? 
+                                    trigger.player_stats.recent_form : 
+                                    trigger.player_stats.recent_form.split('')
+                                  ).slice(0, 5).map((result: string, index: number) => (
                                     <span key={index} className={result === 'W' ? 'form-win' : 'form-loss'}>
                                       {result}
                                     </span>
@@ -397,10 +402,19 @@ const AnalysisPage: React.FC = () => {
                             
                             <div className="detailed-analysis">
                               <p><strong>Техническое описание:</strong> {trigger.trigger_value}</p>
-                              <p>
-                                Этот триггер помогает выявить паттерны в игре спортсмена, которые могут указывать на 
-                                психологические, технические или физические проблемы, требующие внимания тренерского состава.
-                              </p>
+                              
+                              {/* ИИ-анализ от Ollama */}
+                              {trigger.ai_analysis ? (
+                                <div className="ai-analysis">
+                                  <p><strong>Анализ ИИ:</strong></p>
+                                  <p>{trigger.ai_analysis}</p>
+                                </div>
+                              ) : (
+                                <p>
+                                  Этот триггер помогает выявить паттерны в игре спортсмена, которые могут указывать на 
+                                  психологические, технические или физические проблемы, требующие внимания тренерского состава.
+                                </p>
+                              )}
                             </div>
 
                             {trigger.trigger_metadata && (
@@ -417,26 +431,6 @@ const AnalysisPage: React.FC = () => {
               )}
 
               {/* Секция анализа ИИ теперь интегрирована в каждую карточку триггера */}
-
-              {analysisResult.top_performers && analysisResult.top_performers.length > 0 && (
-                <div className="top-performers-section">
-                  <h4>Лучшие игроки периода</h4>
-                  <div className="performers-list">
-                    {analysisResult.top_performers.map((performer, index) => (
-                      <div key={performer.id} className="performer-card">
-                        <div className="rank">#{index + 1}</div>
-                        <div className="performer-info">
-                          <h5>{performer.full_name}</h5>
-                          <div className="stats">
-                            <span>Побед: {performer.wins}%</span>
-                            <span>Матчей: {performer.matches_played}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>
