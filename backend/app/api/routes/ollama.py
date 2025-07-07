@@ -11,10 +11,13 @@
 http://localhost:8000/api/v1/ollama/models
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, Request
 from typing import List, Dict, Optional
+
+from fastapi.responses import StreamingResponse
 from app.services.auth_service import get_current_active_user
 from app.services.ollama_service import (
+    ollama_stream,
     send_message,
     send_streaming_message,  # 🌊 Потоковый режим - быстрее для больших моделей
     get_available_models,    # 📋 Получение списка моделей из Ollama
@@ -193,3 +196,36 @@ async def check_trigger_and_ask_ollama(
     except Exception as e:
         print(f"Ошибка при проверке триггера: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+
+
+
+
+
+
+# async def ollama_stream(prompt: str):
+#     async with httpx.AsyncClient(timeout=None) as client:
+#         async with client.stream("POST", "http://localhost:11434/api/chat", json={
+#             "model": "llama3",  # замените на нужную модель
+#             "stream": True,
+#             "messages": [
+#                 {"role": "user", "content": prompt}
+#             ]
+#         }) as response:
+#             async for line in response.aiter_lines():
+#                 if not line.strip():
+#                     continue
+#                 try:
+#                     data = json.loads(line)
+#                     if "message" in data and "content" in data["message"]:
+#                         yield data["message"]["content"]
+#                 except json.JSONDecodeError:
+#                     continue
+
+@router.post("/newchat")
+async def chat_stream(request: Request):
+    body = await request.json()
+    prompt = body.get("prompt", "")
+
+    return StreamingResponse(ollama_stream(prompt), media_type="text/plain")
