@@ -643,3 +643,26 @@ def trigger(data: dict) -> str:
     )
 
     return context
+
+
+
+
+# НОВЫЙМАРШРУТ ДЛЯ АНАЛИЗА НА ГЛАВНОЙ СТРАНИЦЕ
+async def ollama_stream(prompt: str):
+    async with httpx.AsyncClient(timeout=None) as client:
+        async with client.stream("POST", "http://localhost:11434/api/chat", json={
+            "model": "tennistennis",  # ЗАМЕНИ НА НАЗВАНИЕ СВОЕЙ МОДЕЛИ КОТОРУЮ ТЫ НАЗВАЛ У СЕБЯ В OLLAMA
+            "stream": True,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }) as response:
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                    if "message" in data and "content" in data["message"]:
+                        yield data["message"]["content"]
+                except json.JSONDecodeError:
+                    continue
