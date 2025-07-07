@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import './AnalysisPage.css';
 
+interface TriggerType {
+  id: string;
+  name: string;
+  description: string;
+  severity: 'positive' | 'low' | 'medium' | 'high' | 'critical';
+}
+
 interface Trigger {
   id: string;
   player_id: string;
@@ -68,17 +75,17 @@ const AnalysisPage: React.FC = () => {
   const [periodEnd, setPeriodEnd] = useState<string>('');
   const [triggerFilter, setTriggerFilter] = useState<string>('');
   
-  const triggerTypes = [
-    { id: 'defeat_0_3', name: 'Поражения 0:3', severity: 'high' },
-    { id: 'won_2_lost_3rd_set', name: 'Выиграл 2 сета, проиграл 3-й', severity: 'high' },
-    { id: 'early_final_exit_advanced', name: 'Досрочный выход из финала', severity: 'high' },
-    { id: 'led_1_set_lost_match', name: 'Вёл 1 сет и проиграл', severity: 'medium' },
-    { id: 'led_2_sets_lost_match', name: 'Вёл 2 сета и проиграл', severity: 'critical' },
-    { id: 'psychological_breakdown', name: 'Психологические срывы', severity: 'high' },
-    { id: 'comeback_inability', name: 'Неспособность к камбекам', severity: 'medium' },
-    { id: 'pressure_situations', name: 'Игра под давлением', severity: 'high' },
-    { id: 'losing_streaks', name: 'Серии поражений', severity: 'medium' },
-    { id: 'top_performers', name: 'Топ игроки', severity: 'positive' }
+  const triggerTypes: TriggerType[] = [
+    { id: 'top_performers', name: 'Топ игроки', description: 'Игроки с лучшими показателями за период - высокий процент побед, стабильная игра', severity: 'positive' },
+    { id: 'losers_50_percent', name: 'Проигрывающие игроки', description: 'Игроки с процентом побед менее 50% - требуют внимания тренерского состава', severity: 'medium' },
+    { id: 'defeat_0_3', name: 'Поражения 0:3', description: 'Игроки, часто проигрывающие в сухую (0:3) - проблемы с мотивацией или подготовкой', severity: 'high' },
+    { id: 'won_2_lost_3rd_set', name: 'Проигрыш после 2:0', description: 'Игроки, которые ведут 2:0 по сетам, но проигрывают матч - психологические проблемы', severity: 'high' },
+    { id: 'early_final_exit_advanced', name: 'Досрочный уход с корта', description: 'Игроки, досрочно покидающие финальные матчи - травмы или психологическое давление', severity: 'high' },
+    { id: 'led_1_set_lost_match', name: 'Проигрыш после лидерства', description: 'Игроки, которые ведут в счёте по сетам, но проигрывают матч - проблемы с концентрацией', severity: 'medium' },
+    { id: 'led_2_sets_lost_match', name: 'Критический проигрыш 2:0→2:3', description: 'Игроки, проигрывающие после лидерства 2:0 - серьёзные ментальные проблемы', severity: 'critical' },
+    { id: 'psychological_breakdown', name: 'Психологические срывы', description: 'Игроки с резкими перепадами в игре, эмоциональными вспышками на корте', severity: 'high' },
+    { id: 'comeback_inability', name: 'Неспособность к камбекам', description: 'Игроки, которые не могут отыграться при отставании в счёте - слабая ментальность', severity: 'medium' },
+    { id: 'pressure_situations', name: 'Игра под давлением', description: 'Игроки, показывающие слабые результаты в важных/финальных матчах', severity: 'high' }
   ];
 
   useEffect(() => {
@@ -386,16 +393,13 @@ const AnalysisPage: React.FC = () => {
                           </div>
                           
                           <div className="analysis-text">
-                            <p><strong>Описание триггера:</strong> {trigger.trigger_value}</p>
+                            <p><strong>Описание триггера:</strong> {triggerTypes.find(t => t.id === trigger.trigger_type)?.description || trigger.trigger_value}</p>
                             
                             <div className="detailed-analysis">
+                              <p><strong>Техническое описание:</strong> {trigger.trigger_value}</p>
                               <p>
-                                ОЛГНЕПКАВПРОЛДЖИГРОНПЕКАВПРОЛШШТГПНЕКУВЫСНАЧСПРОГНШШТLНЕКАВЫСАРТОЛАДШИ
-                                ЛГНЕПКАВСМВИАЛЬОЛШГОНПЕКАВПРОШНЕПКАВУБСАЛНГНШНГЛАВПТЬРТЛДУТГОЦШИР
-                                ГШмнолЬнЬнчцеос
-                              </p>
-                              <p>
-                                чаролнщнеиехфЗанитголжщигронпекавннгфесамитрбойок.эжзжшцнневд
+                                Этот триггер помогает выявить паттерны в игре спортсмена, которые могут указывать на 
+                                психологические, технические или физические проблемы, требующие внимания тренерского состава.
                               </p>
                             </div>
 
