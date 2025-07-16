@@ -31,14 +31,6 @@ const Sidebar: React.FC = () => {
           <i className="bi bi-chat-dots"></i>
           <span>Чат</span>
         </Link>
-        
-        <Link 
-          to="/analysis" 
-          className={`nav-item ${isActive('/analysis') || isActive('/upload') ? 'active' : ''}`}
-        >
-          <i className="bi bi-graph-up-arrow"></i>
-          <span>Анализ матчей</span>
-        </Link>
       </nav>
     </aside>
   );

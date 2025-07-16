@@ -1788,7 +1788,7 @@ class MatchAnalysisService:
                     "model": "llama3.2",  # ← ИЗМЕНИТЕ НА ВАШУ МОДЕЛЬ
                     "stream": True,
                     "messages": [
-                        {"role": "system", "content": "Ты профессиональный спортивный аналитик настольного тенниса. Дай краткий, но содержательный анализ проблемы игрока на русском языке."},
+                        {"role": "system", "content": "тут пиши."},
                         {"role": "user", "content": prompt}
                     ]
                 }) as response:

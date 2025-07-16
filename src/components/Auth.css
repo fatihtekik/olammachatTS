@@ -3,7 +3,7 @@
     justify-content: center;
     align-items: center;
     height: 100vh;
-    background-color: #f5f5f5;
+    background-color: #78E3FF;
 }
 
 .auth-form {
@@ -18,7 +18,7 @@
 .auth-form h2 {
     text-align: center;
     margin-bottom: 1.5rem;
-    color: #333;
+    color: #7286B5;
 }
 
 .form-group {
@@ -29,13 +29,13 @@
     display: block;
     margin-bottom: 0.5rem;
     font-weight: 500;
-    color: #555;
+    color: #7286B5;
 }
 
 .form-group input {
     width: 100%;
     padding: 0.75rem;
-    border: 1px solid #ddd;
+    border: 1px solid #7286B5;
     border-radius: 4px;
     font-size: 1rem;
 }
@@ -43,7 +43,7 @@
 .auth-button {
     width: 100%;
     padding: 0.75rem;
-    background-color: #4a6da7;
+    background-color: #F94A66;
     color: white;
     border: none;
     border-radius: 4px;
@@ -54,7 +54,7 @@
 }
 
 .auth-button:hover {
-    background-color: #39578a;
+    background-color: #D9364E;
 }
 
 .auth-button:disabled {
@@ -65,13 +65,13 @@
 .auth-toggle {
     margin-top: 1.5rem;
     text-align: center;
-    color: #666;
+    color: #7286B5;
 }
 
 .toggle-button {
     background: none;
     border: none;
-    color: #4a6da7;
+    color: #F94A66;
     cursor: pointer;
     font-weight: 500;
     text-decoration: underline;

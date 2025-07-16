@@ -30,7 +30,7 @@ interface Trigger {
     win_rate: number;
     sets_won: number;
     sets_lost: number;
-    recent_form: string;
+    recent_form: string | string[];
     recent_matches?: Array<{
       date: string;
       opponent: string;
@@ -75,18 +75,26 @@ const AnalysisPage: React.FC = () => {
   const [periodStart, setPeriodStart] = useState<string>('');
   const [periodEnd, setPeriodEnd] = useState<string>('');
   const [triggerFilter, setTriggerFilter] = useState<string>('');
-  
+  // Состояние для загрузки Excel
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadResult, setUploadResult] = useState<{
+    created_matches?: number;
+    skipped_duplicates?: number;
+    total_processed?: number;
+    errors?: string[];
+  } | null>(null);
+
   const triggerTypes: TriggerType[] = [
-    { id: 'top_performers', name: 'Топ игроки', description: 'Игроки с лучшими показателями за период - высокий процент побед, стабильная игра', severity: 'positive' },
-    { id: 'losers_50_percent', name: 'Проигрывающие игроки', description: 'Игроки с процентом побед менее 50% - требуют внимания тренерского состава', severity: 'medium' },
-    { id: 'defeat_0_3', name: 'Поражения 0:3', description: 'Игроки, часто проигрывающие в сухую (0:3) - проблемы с мотивацией или подготовкой', severity: 'high' },
-    { id: 'won_2_lost_3rd_set', name: 'Проигрыш после 2:0', description: 'Игроки, которые ведут 2:0 по сетам, но проигрывают матч - психологические проблемы', severity: 'high' },
-    { id: 'early_final_exit_advanced', name: 'Досрочный уход с корта', description: 'Игроки, досрочно покидающие финальные матчи - травмы или психологическое давление', severity: 'high' },
-    { id: 'led_1_set_lost_match', name: 'Проигрыш после лидерства', description: 'Игроки, которые ведут в счёте по сетам, но проигрывают матч - проблемы с концентрацией', severity: 'medium' },
-    { id: 'led_2_sets_lost_match', name: 'Критический проигрыш 2:0→2:3', description: 'Игроки, проигрывающие после лидерства 2:0 - серьёзные ментальные проблемы', severity: 'critical' },
-    { id: 'psychological_breakdown', name: 'Психологические срывы', description: 'Игроки с резкими перепадами в игре, эмоциональными вспышками на корте', severity: 'high' },
-    { id: 'comeback_inability', name: 'Неспособность к камбекам', description: 'Игроки, которые не могут отыграться при отставании в счёте - слабая ментальность', severity: 'medium' },
-    { id: 'pressure_situations', name: 'Игра под давлением', description: 'Игроки, показывающие слабые результаты в важных/финальных матчах', severity: 'high' }
+    { id: 'top_performers', name: 'Топ игроки', description: 'Высокие результаты', severity: 'positive' },
+    { id: 'losers_50_percent', name: 'Слабые результаты', description: 'Процент побед менее 50%', severity: 'medium' },
+    { id: 'defeat_0_3', name: 'Поражения 0:3', description: 'Частые поражения в сухую', severity: 'high' },
+    { id: 'won_2_lost_3rd_set', name: 'Проигрыш после 2:0', description: 'Потеря преимущества в матче', severity: 'high' },
+    { id: 'early_final_exit_advanced', name: 'Досрочный уход', description: 'Незавершенные финальные матчи', severity: 'high' },
+    { id: 'led_1_set_lost_match', name: 'Потеря лидерства', description: 'Проигрыш после преимущества', severity: 'medium' },
+    { id: 'led_2_sets_lost_match', name: 'Критический проигрыш', description: 'Проигрыш после лидерства 2:0', severity: 'critical' },
+    { id: 'psychological_breakdown', name: 'Психологические проблемы', description: 'Нестабильная игра', severity: 'high' },
+    { id: 'comeback_inability', name: 'Проблемы с камбеками', description: 'Неспособность отыграться', severity: 'medium' },
+    { id: 'pressure_situations', name: 'Игра под давлением', description: 'Слабые результаты в важных матчах', severity: 'high' }
   ];
 
   useEffect(() => {
@@ -101,7 +109,7 @@ const AnalysisPage: React.FC = () => {
 
   const loadPlayers = async () => {
     try {
-      const response = await fetch('/api/v1/match-analysis/players');
+      const response = await fetch('http://localhost:8000/api/v1/match-analysis/players');
       if (response.ok) {
         const data = await response.json();
         setPlayers(data.players || []);
@@ -146,6 +154,43 @@ const AnalysisPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Обработчик выбора файла
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSelectedFile(e.target.files?.[0] || null);
+  };
+  
+  // Функция загрузки Excel на сервер
+  const uploadExcel = async () => {
+    if (!selectedFile) {
+      alert('Пожалуйста, выберите файл');
+      return;
+    }
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    try {
+      const response = await fetch('http://localhost:8000/api/v1/match-analysis/upload-excel', {
+        method: 'POST',
+        body: formData,
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        alert(`Ошибка загрузки: ${err.detail || response.statusText}`);
+        return;
+      }
+      const result = await response.json();
+      setUploadResult(result);
+    } catch (error) {
+      console.error('Error uploading Excel:', error);
+      alert('Ошибка при загрузке файла');
+    }
+  };
+  
+  // После загрузки, перейти к анализу базы данных и выполнить анализ
+  const handleAnalyzeAfterUpload = async () => {
+    setAnalysisMode('database');
+    await analyzeDatabase();
   };
 
   const handlePlayerToggle = (playerId: string) => {
@@ -204,10 +249,32 @@ const AnalysisPage: React.FC = () => {
             <i className="bi bi-file-earmark-excel"></i>
             <h3>Загрузить Excel файл</h3>
             <p>Загрузите файл с матчами для анализа триггеров</p>
-            <button className="upload-btn">
+            <input type="file" accept=".xlsx,.xls" onChange={handleFileChange} />
+            <button className="upload-btn" onClick={uploadExcel} disabled={!selectedFile}>
               <i className="bi bi-upload"></i>
-              Выбрать файл
+              Загрузить
             </button>
+            {uploadResult && (
+              <div className="upload-result">
+                <p>Всего строк: {uploadResult.total_processed}</p>
+                <p>Создано матчей: {uploadResult.created_matches}</p>
+                <p>Пропущено дубликатов: {uploadResult.skipped_duplicates}</p>
+                {uploadResult.errors && uploadResult.errors.length > 0 && (
+                  <div>
+                    <p>Ошибки при загрузке:</p>
+                    <ul>
+                      {uploadResult.errors.map((err, idx) => (
+                        <li key={idx}>{err}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <button className="analyze-btn" onClick={handleAnalyzeAfterUpload}>
+                  <i className="bi bi-search"></i>
+                  Анализировать
+                </button>
+              </div>
+            )}
           </div>
         </div>
       ) : (
