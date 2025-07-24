@@ -719,8 +719,62 @@
   }
 }
 
-/* Секция последних матчей */
+/* Секция тегов триггеров */
+.player-triggers {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #e9ecef;
+}
+
+.player-triggers h4 {
+  font-size: 1rem;
+  margin: 0 0 12px 0;
+  color: #333;
+  font-weight: 600;
+}
+
+.triggers-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trigger-tag {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 16px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.trigger-tag-positive {
+  background: rgba(40, 167, 69, 0.1);
+  color: #28a745;
+  border: 1px solid rgba(40, 167, 69, 0.3);
+}
+
+.trigger-tag-positive:hover {
+  background: rgba(40, 167, 69, 0.2);
+  transform: translateY(-1px);
+}
+
+.trigger-tag-negative {
+  background: rgba(220, 53, 69, 0.1);
+  color: #dc3545;
+  border: 1px solid rgba(220, 53, 69, 0.3);
+}
+
+.trigger-tag-negative:hover {
+  background: rgba(220, 53, 69, 0.2);
+  transform: translateY(-1px);
+}
+
+/* Секция последних матчей - оставим для совместимости, но скроем */
 .recent-matches {
+  display: none;
   margin-top: 20px;
   padding-top: 15px;
   border-top: 1px solid #e9ecef;
@@ -798,6 +852,162 @@
 .ai-analysis p {
   margin: 0 0 8px 0;
   color: #333;
+}
+
+/* Модальное окно */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 12px;
+  max-width: 600px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: #333;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.8rem;
+  color: #999;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.modal-close:hover {
+  background: #f8f9fa;
+  color: #333;
+}
+
+.modal-body {
+  padding: 24px;
+}
+
+.modal-player-info {
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.modal-player-info h4 {
+  margin: 0 0 8px 0;
+  color: #333;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.modal-player-info p {
+  margin: 0;
+  color: #666;
+  font-size: 1rem;
+}
+
+.modal-trigger-info .trigger-type-badge {
+  display: inline-block;
+  padding: 8px 16px;
+  background: #667eea;
+  color: white;
+  border-radius: 20px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.trigger-severity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.severity-label {
+  font-weight: 600;
+  color: #333;
+}
+
+.severity-indicator {
+  padding: 4px 12px;
+  border-radius: 12px;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.trigger-description {
+  margin-bottom: 20px;
+}
+
+.trigger-description p {
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+  color: #333;
+}
+
+.modal-ai-analysis {
+  background: rgba(102, 126, 234, 0.1);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+  border-left: 4px solid #667eea;
+}
+
+.modal-ai-analysis h5 {
+  margin: 0 0 12px 0;
+  color: #333;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.modal-ai-analysis p {
+  margin: 0;
+  line-height: 1.6;
+  color: #333;
+}
+
+.trigger-period {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e9ecef;
+}
+
+.trigger-period p {
+  margin: 0 0 8px 0;
+  color: #666;
+  font-size: 0.9rem;
 }
 
 .ai-analysis p:last-child {

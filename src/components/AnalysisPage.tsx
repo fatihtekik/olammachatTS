@@ -83,6 +83,9 @@ const AnalysisPage: React.FC = () => {
     total_processed?: number;
     errors?: string[];
   } | null>(null);
+  // Состояние для модального окна
+  const [modalOpen, setModalOpen] = useState<boolean>(false);
+  const [selectedTrigger, setSelectedTrigger] = useState<Trigger | null>(null);
 
   const triggerTypes: TriggerType[] = [
     { id: 'top_performers', name: 'Топ игроки', description: 'Высокие результаты', severity: 'positive' },
@@ -221,6 +224,23 @@ const AnalysisPage: React.FC = () => {
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('ru-RU');
+  };
+
+  // Функция для получения всех триггеров игрока
+  const getPlayerTriggers = (playerId: string): Trigger[] => {
+    return analysisResult?.triggers.filter(t => t.player_id === playerId) || [];
+  };
+
+  // Функция для открытия модального окна с деталями триггера
+  const openTriggerModal = (trigger: Trigger) => {
+    setSelectedTrigger(trigger);
+    setModalOpen(true);
+  };
+
+  // Функция для закрытия модального окна
+  const closeModal = () => {
+    setModalOpen(false);
+    setSelectedTrigger(null);
   };
 
   return (
@@ -438,25 +458,22 @@ const AnalysisPage: React.FC = () => {
                             </div>
                           </div>
 
-                          {/* Показываем последние матчи с временем */}
-                          {trigger.player_stats?.recent_matches && trigger.player_stats.recent_matches.length > 0 && (
-                            <div className="recent-matches">
-                              <h4>Последние матчи:</h4>
-                              <div className="matches-list">
-                                {trigger.player_stats.recent_matches.slice(0, 3).map((match, index) => (
-                                  <div key={index} className="match-item">
-                                    <span className="match-date">{match.date}</span>
-                                    <span className="match-opponent">{match.opponent}</span>
-                                    <span className={`match-result ${match.result === 'W' ? 'win' : 'loss'}`}>
-                                      {match.result}
-                                    </span>
-                                    <span className="match-score">{match.score}</span>
-                                    {match.time && <span className="match-time">{match.time}</span>}
-                                  </div>
-                                ))}
-                              </div>
+                          {/* Теги триггеров вместо списка матчей */}
+                          <div className="player-triggers">
+                            <h4>Триггеры игрока:</h4>
+                            <div className="triggers-tags">
+                              {getPlayerTriggers(trigger.player_id).map((playerTrigger, index) => (
+                                <button
+                                  key={index}
+                                  className={`trigger-tag ${playerTrigger.trigger_type === 'top_performers' ? 'trigger-tag-positive' : 'trigger-tag-negative'}`}
+                                  onClick={() => openTriggerModal(playerTrigger)}
+                                  title={triggerTypes.find(t => t.id === playerTrigger.trigger_type)?.description}
+                                >
+                                  {triggerTypes.find(t => t.id === playerTrigger.trigger_type)?.name || playerTrigger.trigger_type}
+                                </button>
+                              ))}
                             </div>
-                          )}
+                          </div>
                         </div>
 
                         <div className="analysis-text-section">
@@ -500,6 +517,58 @@ const AnalysisPage: React.FC = () => {
               {/* Секция анализа ИИ теперь интегрирована в каждую карточку триггера */}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Модальное окно для детального просмотра триггера */}
+      {modalOpen && selectedTrigger && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Детали триггера</h3>
+              <button className="modal-close" onClick={closeModal}>×</button>
+            </div>
+            
+            <div className="modal-body">
+              <div className="modal-player-info">
+                <h4>{selectedTrigger.player_name}</h4>
+                <p>Рейтинг: {selectedTrigger.player_rating || 'н/д'}</p>
+              </div>
+
+              <div className="modal-trigger-info">
+                <div className="trigger-type-badge">
+                  {triggerTypes.find(t => t.id === selectedTrigger.trigger_type)?.name || selectedTrigger.trigger_type}
+                </div>
+                
+                <div className="trigger-severity">
+                  <span className="severity-label">Уровень серьезности:</span>
+                  <span 
+                    className="severity-indicator"
+                    style={{ backgroundColor: getSeverityColor(selectedTrigger.severity_level) }}
+                  >
+                    {getSeverityText(selectedTrigger.severity_level)}
+                  </span>
+                </div>
+
+                <div className="trigger-description">
+                  <p><strong>Описание:</strong> {triggerTypes.find(t => t.id === selectedTrigger.trigger_type)?.description || selectedTrigger.trigger_value}</p>
+                  <p><strong>Техническое описание:</strong> {selectedTrigger.trigger_value}</p>
+                </div>
+
+                {selectedTrigger.ai_analysis && (
+                  <div className="modal-ai-analysis">
+                    <h5>Анализ ИИ:</h5>
+                    <p>{selectedTrigger.ai_analysis}</p>
+                  </div>
+                )}
+
+                <div className="trigger-period">
+                  <p><strong>Период:</strong> {formatDate(selectedTrigger.period_start)} - {formatDate(selectedTrigger.period_end)}</p>
+                  <p><strong>Создано:</strong> {formatDate(selectedTrigger.created_at)}</p>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

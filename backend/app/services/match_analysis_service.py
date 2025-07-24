@@ -47,7 +47,6 @@ class MatchAnalysisService:
             "long_match_losses": self._analyze_long_match_losses,
             "higher_league_struggles": self._analyze_higher_league_struggles,
             "reception_problems": self._analyze_reception_problems,
-            # Новые триггеры
             "defeat_0_3": self._analyze_defeat_0_3,
             "won_2_lost_3rd_set": self._analyze_won_2_lost_3rd_set,
             "early_final_exit_advanced": self._analyze_early_final_exit_advanced,
@@ -1785,7 +1784,7 @@ class MatchAnalysisService:
             # Вызываем функцию стриминга из ollama_service
             async with httpx.AsyncClient(timeout=30.0) as client:
                 async with client.stream("POST", "http://localhost:11434/api/chat", json={
-                    "model": "llama3.2",  # ← ИЗМЕНИТЕ НА ВАШУ МОДЕЛЬ
+                    "model": "deepseek-r1:8b",  # ← ИЗМЕНИТЕ НА ВАШУ МОДЕЛЬ
                     "stream": True,
                     "messages": [
                         {"role": "system", "content": "тут пиши."},
@@ -1844,6 +1843,7 @@ class MatchAnalysisService:
 - Последняя форма: {recent_form}
 - Детали триггера: {trigger_value}
 
-Дай профессиональный анализ этой проблемы в 2-3 предложениях. Объясни возможные причины и дай рекомендации тренеру.
+Дай профессиональный анализ этой проблемы в 2-3 предложениях. Объясни возможные причины .
 """
+        
         return prompt
