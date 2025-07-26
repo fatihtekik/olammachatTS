@@ -75,6 +75,8 @@ const AnalysisPage: React.FC = () => {
   const [periodStart, setPeriodStart] = useState<string>('');
   const [periodEnd, setPeriodEnd] = useState<string>('');
   const [triggerFilter, setTriggerFilter] = useState<string>('');
+  const [sortBy, setSortBy] = useState<'name' | 'rating' | 'triggers' | 'severity'>('name');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   // Состояние для загрузки Excel
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadResult, setUploadResult] = useState<{
@@ -90,7 +92,7 @@ const AnalysisPage: React.FC = () => {
   const triggerTypes: TriggerType[] = [
     { id: 'top_performers', name: 'Топ игроки', description: 'Высокие результаты', severity: 'positive' },
     { id: 'losers_50_percent', name: 'Слабые результаты', description: 'Процент побед менее 50%', severity: 'medium' },
-    { id: 'defeat_0_3', name: 'Поражения 0:3', description: 'Частые поражения в сухую', severity: 'high' },
+    { id: 'defeat_0_3', name: 'Поражения 0:3', description: 'Поражения в сухую', severity: 'high' },
     { id: 'won_2_lost_3rd_set', name: 'Проигрыш после 2:0', description: 'Потеря преимущества в матче', severity: 'high' },
     { id: 'early_final_exit_advanced', name: 'Досрочный уход', description: 'Незавершенные финальные матчи', severity: 'high' },
     { id: 'led_1_set_lost_match', name: 'Потеря лидерства', description: 'Проигрыш после преимущества', severity: 'medium' },
@@ -231,6 +233,67 @@ const AnalysisPage: React.FC = () => {
     return analysisResult?.triggers.filter(t => t.player_id === playerId) || [];
   };
 
+  // Функция для группировки триггеров по игрокам
+  const getGroupedTriggers = (): Record<string, Trigger[]> => {
+    if (!analysisResult?.triggers) return {};
+    
+    const grouped: Record<string, Trigger[]> = {};
+    const filteredTriggers = analysisResult.triggers.filter(trigger => 
+      !triggerFilter || trigger.trigger_type === triggerFilter
+    );
+    
+    filteredTriggers.forEach(trigger => {
+      if (!grouped[trigger.player_id]) {
+        grouped[trigger.player_id] = [];
+      }
+      grouped[trigger.player_id].push(trigger);
+    });
+    
+    return grouped;
+  };
+
+  // Функция для получения основного триггера игрока (с наивысшим severity)
+  const getMainTrigger = (playerTriggers: Trigger[]): Trigger => {
+    return playerTriggers.reduce((main, current) => 
+      (current.severity_level || 0) > (main.severity_level || 0) ? current : main
+    );
+  };
+
+  // Функция для сортировки игроков
+  const getSortedPlayers = (): [string, Trigger[]][] => {
+    const grouped = getGroupedTriggers();
+    const entries = Object.entries(grouped);
+    
+    return entries.sort(([playerIdA, triggersA], [playerIdB, triggersB]) => {
+      const mainTriggerA = getMainTrigger(triggersA);
+      const mainTriggerB = getMainTrigger(triggersB);
+      
+      let comparison = 0;
+      
+      switch (sortBy) {
+        case 'name':
+          comparison = mainTriggerA.player_name.localeCompare(mainTriggerB.player_name);
+          break;
+        case 'rating':
+          const ratingA = mainTriggerA.player_rating || 1000;
+          const ratingB = mainTriggerB.player_rating || 1000;
+          comparison = ratingB - ratingA; // По умолчанию высокий рейтинг выше
+          break;
+        case 'triggers':
+          comparison = triggersA.length - triggersB.length;
+          break;
+        case 'severity':
+          const severityA = Math.max(...triggersA.map(t => t.severity_level || 0));
+          const severityB = Math.max(...triggersB.map(t => t.severity_level || 0));
+          comparison = severityB - severityA; // По умолчанию высокая опасность выше
+          break;
+      }
+      
+      // Применяем порядок сортировки
+      return sortOrder === 'desc' ? -comparison : comparison;
+    });
+  };
+
   // Функция для открытия модального окна с деталями триггера
   const openTriggerModal = (trigger: Trigger) => {
     setSelectedTrigger(trigger);
@@ -246,7 +309,7 @@ const AnalysisPage: React.FC = () => {
   return (
     <div className="analysis-page">
       <div className="analysis-header">
-        <h1>Анализ матчей</h1>
+        <h1>Игроков анализ</h1>
         <div className="mode-selector">
           <button 
             className={`mode-btn ${analysisMode === 'upload' ? 'active' : ''}`}
@@ -378,138 +441,159 @@ const AnalysisPage: React.FC = () => {
                 </p>
               </div>
 
-              {/* Фильтр триггеров */}
+              {/* Фильтр и сортировка */}
               {analysisResult.triggers && analysisResult.triggers.length > 0 && (
-                <div className="triggers-filter">
-                  <label htmlFor="trigger-filter">Фильтр по типу триггера:</label>
-                  <select 
-                    id="trigger-filter"
-                    value={triggerFilter} 
-                    onChange={(e) => setTriggerFilter(e.target.value)}
-                    className="filter-select"
-                  >
-                    <option value="">Все триггеры</option>
-                    {triggerTypes.map(trigger => (
-                      <option key={trigger.id} value={trigger.id}>
-                        {trigger.name}
-                      </option>
-                    ))}
-                  </select>
+                <div className="controls-section">
+                  <div className="triggers-filter">
+                    <label htmlFor="trigger-filter">Фильтр по типу подозрительной активности:</label>
+                    <select 
+                      id="trigger-filter"
+                      value={triggerFilter} 
+                      onChange={(e) => setTriggerFilter(e.target.value)}
+                      className="filter-select"
+                    >
+                      <option value="">Все типы активности</option>
+                      {triggerTypes.map(trigger => (
+                        <option key={trigger.id} value={trigger.id}>
+                          {trigger.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="sort-controls">
+                    <label htmlFor="sort-select">Сортировать по:</label>
+                    <div className="sort-group">
+                      <select 
+                        id="sort-select"
+                        value={sortBy} 
+                        onChange={(e) => setSortBy(e.target.value as 'name' | 'rating' | 'triggers' | 'severity')}
+                        className="filter-select"
+                      >
+                        <option value="name">Имени игрока</option>
+                        <option value="rating">Рейтингу</option>
+                        <option value="triggers">Количеству триггеров</option>
+                        <option value="severity">Уровню опасности</option>
+                      </select>
+                      <button 
+                        onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                        className="sort-order-btn"
+                        title={sortOrder === 'asc' ? 'По возрастанию' : 'По убыванию'}
+                      >
+                        {sortOrder === 'asc' ? '▲' : '▼'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
               {analysisResult.triggers && analysisResult.triggers.length > 0 && (
                 <div className="triggers-section">
-                  <h4>Обнаруженные триггеры</h4>
+                  <h4>Подозрительные игроки</h4>
                   <div className="triggers-list">
-                    {analysisResult.triggers
-                      .filter(trigger => !triggerFilter || trigger.trigger_type === triggerFilter)
-                      .map(trigger => (
-                      <div key={trigger.id} className={`trigger-card ${trigger.trigger_type === 'top_performers' ? 'trigger-card-green' : 'trigger-card-red'}`}>
-                        <div className="player-badge">
-                          <span className="player-number">#{Math.floor(Math.random() * 99) + 1}</span>
-                        </div>
-                        
-                        <div className="player-info-section">
-                          <h3 className="player-name">{trigger.player_name} рейтинг: {trigger.player_rating || 'н/д'}</h3>
+                    {getSortedPlayers().map(([playerId, playerTriggers]) => {
+                      const mainTrigger = getMainTrigger(playerTriggers);
+                      const hasPositiveTriggers = playerTriggers.some(t => t.trigger_type === 'top_performers');
+                      
+                      return (
+                        <div key={playerId} className={`trigger-card ${hasPositiveTriggers ? 'trigger-card-green' : 'trigger-card-red'}`}>
+                          <div className="player-badge">
+                            <span className="player-number">#{Math.floor(Math.random() * 99) + 1}</span>
+                          </div>
                           
-                          <div className="stats-grid">
-                            <div className="stat-item">
-                              <span className="stat-label">Рейтинг:</span>
-                              <span className="stat-value">{trigger.player_rating || 1000}</span>
+                          <div className="player-info-section">
+                            <h3 className="player-name">{mainTrigger.player_name} рейтинг: {mainTrigger.player_rating || 'н/д'}</h3>
+                            
+                            <div className="stats-grid">
+                              <div className="stat-item">
+                                <span className="stat-label">Рейтинг:</span>
+                                <span className="stat-value">{mainTrigger.player_rating || 1000}</span>
+                              </div>
+                              <div className="stat-item">
+                                <span className="stat-label">Побед:</span>
+                                <span className="stat-value">
+                                  {mainTrigger.player_stats ? 
+                                    `${mainTrigger.player_stats.wins}/${mainTrigger.player_stats.matches_played} (${mainTrigger.player_stats.win_rate.toFixed(1)}%)` : 
+                                    '40/40 (100%)'
+                                  }
+                                </span>
+                              </div>
+                              <div className="stat-item">
+                                <span className="stat-label">Сеты:</span>
+                                <span className="stat-value">
+                                  {mainTrigger.player_stats ? 
+                                    `${mainTrigger.player_stats.sets_won}:${mainTrigger.player_stats.sets_lost}` : 
+                                    '15:5'
+                                  }
+                                </span>
+                              </div>
+                              <div className="stat-item">
+                                <span className="stat-label">Форма:</span>
+                                <div className="form-indicator">
+                                  {mainTrigger.player_stats && mainTrigger.player_stats.recent_form ? 
+                                    // Проверяем, массив это или строка и приводим к массиву
+                                    (Array.isArray(mainTrigger.player_stats.recent_form) ? 
+                                      mainTrigger.player_stats.recent_form : 
+                                      mainTrigger.player_stats.recent_form.split('')
+                                    ).slice(0, 5).map((result: string, index: number) => (
+                                      <span key={index} className={result === 'W' ? 'form-win' : 'form-loss'}>
+                                        {result}
+                                      </span>
+                                    )) :
+                                    // Fallback для статических данных
+                                    ['W', 'W', 'W', 'W', 'W'].map((result, index) => (
+                                      <span key={index} className="form-win">{result}</span>
+                                    ))
+                                  }
+                                </div>
+                              </div>
                             </div>
-                            <div className="stat-item">
-                              <span className="stat-label">Побед:</span>
-                              <span className="stat-value">
-                                {trigger.player_stats ? 
-                                  `${trigger.player_stats.wins}/${trigger.player_stats.matches_played} (${trigger.player_stats.win_rate.toFixed(1)}%)` : 
-                                  '40/40 (100%)'
-                                }
-                              </span>
-                            </div>
-                            <div className="stat-item">
-                              <span className="stat-label">Сеты:</span>
-                              <span className="stat-value">
-                                {trigger.player_stats ? 
-                                  `${trigger.player_stats.sets_won}:${trigger.player_stats.sets_lost}` : 
-                                  '15:5'
-                                }
-                              </span>
-                            </div>
-                            <div className="stat-item">
-                              <span className="stat-label">Форма:</span>
-                              <div className="form-indicator">
-                                {trigger.player_stats && trigger.player_stats.recent_form ? 
-                                  // Проверяем, массив это или строка и приводим к массиву
-                                  (Array.isArray(trigger.player_stats.recent_form) ? 
-                                    trigger.player_stats.recent_form : 
-                                    trigger.player_stats.recent_form.split('')
-                                  ).slice(0, 5).map((result: string, index: number) => (
-                                    <span key={index} className={result === 'W' ? 'form-win' : 'form-loss'}>
-                                      {result}
-                                    </span>
-                                  )) :
-                                  // Fallback для статических данных
-                                  ['W', 'W', 'W', 'W', 'W'].map((result, index) => (
-                                    <span key={index} className="form-win">{result}</span>
-                                  ))
-                                }
+
+                            {/* Теги всех триггеров игрока */}
+                            <div className="player-triggers">
+                              <h4>Триггеры игрока:</h4>
+                              <div className="triggers-tags">
+                                {playerTriggers.map((playerTrigger, index) => (
+                                  <button
+                                    key={index}
+                                    className={`trigger-tag ${playerTrigger.trigger_type === 'top_performers' ? 'trigger-tag-positive' : 'trigger-tag-negative'}`}
+                                    onClick={() => openTriggerModal(playerTrigger)}
+                                    title={triggerTypes.find(t => t.id === playerTrigger.trigger_type)?.description}
+                                  >
+                                    {triggerTypes.find(t => t.id === playerTrigger.trigger_type)?.name || playerTrigger.trigger_type}
+                                  </button>
+                                ))}
                               </div>
                             </div>
                           </div>
 
-                          {/* Теги триггеров вместо списка матчей */}
-                          <div className="player-triggers">
-                            <h4>Триггеры игрока:</h4>
-                            <div className="triggers-tags">
-                              {getPlayerTriggers(trigger.player_id).map((playerTrigger, index) => (
-                                <button
-                                  key={index}
-                                  className={`trigger-tag ${playerTrigger.trigger_type === 'top_performers' ? 'trigger-tag-positive' : 'trigger-tag-negative'}`}
-                                  onClick={() => openTriggerModal(playerTrigger)}
-                                  title={triggerTypes.find(t => t.id === playerTrigger.trigger_type)?.description}
-                                >
-                                  {triggerTypes.find(t => t.id === playerTrigger.trigger_type)?.name || playerTrigger.trigger_type}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
+                          <div className="analysis-text-section">
+                            <div className="analysis-text">
+                              <div className="detailed-analysis">
+                                {/* Комплексный ИИ-анализ всех триггеров игрока */}
+                                {mainTrigger.ai_analysis ? (
+                                  <div className="ai-analysis">
+                                    <p><strong>Анализ ИИ</strong></p>
+                                    <p>{mainTrigger.ai_analysis}</p>
+                                  </div>
+                                ) : (
+                                  <p>
+                                    Анализ выявленных паттернов поможет определить уровень подозрительности игрока 
+                                    и возможные признаки договорных матчей или намеренных проигрышей.
+                                  </p>
+                                )}
+                              </div>
 
-                        <div className="analysis-text-section">
-                          <div className="trigger-type-badge">
-                            {triggerTypes.find(t => t.id === trigger.trigger_type)?.name || trigger.trigger_type}
-                          </div>
-                          
-                          <div className="analysis-text">
-                            <p><strong>Описание триггера:</strong> {triggerTypes.find(t => t.id === trigger.trigger_type)?.description || trigger.trigger_value}</p>
-                            
-                            <div className="detailed-analysis">
-                              <p><strong>Техническое описание:</strong> {trigger.trigger_value}</p>
-                              
-                              {/* ИИ-анализ от Ollama */}
-                              {trigger.ai_analysis ? (
-                                <div className="ai-analysis">
-                                  <p><strong>Анализ ИИ:</strong></p>
-                                  <p>{trigger.ai_analysis}</p>
+                              {mainTrigger.trigger_metadata && (
+                                <div className="metadata-info">
+                                  <small>Последний анализ: {formatDate(mainTrigger.created_at)}</small>
                                 </div>
-                              ) : (
-                                <p>
-                                  Этот триггер помогает выявить паттерны в игре спортсмена, которые могут указывать на 
-                                  психологические, технические или физические проблемы, требующие внимания тренерского состава.
-                                </p>
                               )}
                             </div>
-
-                            {trigger.trigger_metadata && (
-                              <div className="metadata-info">
-                                <small>Создано: {formatDate(trigger.created_at)}</small>
-                              </div>
-                            )}
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -536,10 +620,6 @@ const AnalysisPage: React.FC = () => {
               </div>
 
               <div className="modal-trigger-info">
-                <div className="trigger-type-badge">
-                  {triggerTypes.find(t => t.id === selectedTrigger.trigger_type)?.name || selectedTrigger.trigger_type}
-                </div>
-                
                 <div className="trigger-severity">
                   <span className="severity-label">Уровень серьезности:</span>
                   <span 
@@ -551,8 +631,8 @@ const AnalysisPage: React.FC = () => {
                 </div>
 
                 <div className="trigger-description">
-                  <p><strong>Описание:</strong> {triggerTypes.find(t => t.id === selectedTrigger.trigger_type)?.description || selectedTrigger.trigger_value}</p>
-                  <p><strong>Техническое описание:</strong> {selectedTrigger.trigger_value}</p>
+                  <p>{triggerTypes.find(t => t.id === selectedTrigger.trigger_type)?.description || selectedTrigger.trigger_value}</p>
+                  <p>{selectedTrigger.trigger_value}</p>
                 </div>
 
                 {selectedTrigger.ai_analysis && (

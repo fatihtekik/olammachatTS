@@ -572,40 +572,47 @@ class MatchAnalysisService:
             )
         ).all()
         
-        result = []
+        # Группируем триггеры по игрокам
+        players_triggers = {}
         for trigger in triggers:
-            # Получаем игрока для этого триггера
-            player = self.db.query(Player).filter(Player.id == trigger.player_id).first()
+            if trigger.player_id not in players_triggers:
+                players_triggers[trigger.player_id] = []
+            players_triggers[trigger.player_id].append(trigger)
+        
+        result = []
+        
+        # Генерируем ИИ-анализ для каждого игрока (всех его триггеров сразу)
+        for player_id, player_triggers in players_triggers.items():
+            player = self.db.query(Player).filter(Player.id == player_id).first()
+            player_stats = self._get_player_stats_for_trigger(player_id, start_date, end_date)
             
-            # Получаем детальную статистику игрока
-            player_stats = self._get_player_stats_for_trigger(trigger.player_id, start_date, end_date)
-            
-            # Генерируем ИИ-анализ для триггера
-            ai_analysis = await self._generate_ai_analysis(
-                trigger.trigger_type,
+            # Генерируем общий ИИ-анализ для всех триггеров игрока
+            ai_analysis = await self._generate_player_comprehensive_analysis(
                 player.full_name if player else 'Неизвестный игрок',
-                trigger.trigger_value,
+                player_triggers,
                 player_stats or {}
             )
             
-            trigger_dict = {
-                'id': trigger.id,
-                'player_id': trigger.player_id,
-                'player_name': player.full_name if player else 'Неизвестный игрок',
-                'player_rating': player.current_rating if player else None,
-                'trigger_type': trigger.trigger_type,
-                'trigger_subtype': trigger.trigger_subtype,
-                'trigger_value': trigger.trigger_value,
-                'severity_level': trigger.severity_level,
-                'period_start': trigger.period_start,
-                'period_end': trigger.period_end,
-                'is_active': trigger.is_active,
-                'trigger_metadata': trigger.trigger_metadata,
-                'created_at': trigger.created_at,
-                'player_stats': player_stats if player_stats else None,
-                'ai_analysis': ai_analysis  # ← Добавляем ИИ-анализ!
-            }
-            result.append(trigger_dict)
+            # Добавляем все триггеры игрока в результат с общим анализом
+            for trigger in player_triggers:
+                trigger_dict = {
+                    'id': trigger.id,
+                    'player_id': trigger.player_id,
+                    'player_name': player.full_name if player else 'Неизвестный игрок',
+                    'player_rating': player.current_rating if player else None,
+                    'trigger_type': trigger.trigger_type,
+                    'trigger_subtype': trigger.trigger_subtype,
+                    'trigger_value': trigger.trigger_value,
+                    'severity_level': trigger.severity_level,
+                    'period_start': trigger.period_start,
+                    'period_end': trigger.period_end,
+                    'is_active': trigger.is_active,
+                    'trigger_metadata': trigger.trigger_metadata,
+                    'created_at': trigger.created_at,
+                    'player_stats': player_stats if player_stats else None,
+                    'ai_analysis': ai_analysis  # ← Общий анализ для всех триггеров игрока!
+                }
+                result.append(trigger_dict)
         
         # Сортируем по уровню серьезности (от самых серьезных к менее серьезным)
         result.sort(key=lambda x: x['severity_level'] or 0, reverse=True)
@@ -1784,7 +1791,7 @@ class MatchAnalysisService:
             # Вызываем функцию стриминга из ollama_service
             async with httpx.AsyncClient(timeout=30.0) as client:
                 async with client.stream("POST", "http://localhost:11434/api/chat", json={
-                    "model": "deepseek-r1:8b",  # ← ИЗМЕНИТЕ НА ВАШУ МОДЕЛЬ
+                    "model": "llama3.2:latest",  # ← ИЗМЕНИТЕ НА ВАШУ МОДЕЛЬ
                     "stream": True,
                     "messages": [
                         {"role": "system", "content": "тут пиши."},
@@ -1847,3 +1854,97 @@ class MatchAnalysisService:
 """
         
         return prompt
+
+    async def _generate_player_comprehensive_analysis(self, player_name: str, player_triggers: List[PlayerTrigger], player_stats: Dict) -> str:
+        """Генерирует комплексный ИИ-анализ для всех триггеров игрока"""
+        if not self._ai_analysis_enabled:
+            return f"Комплексный анализ игрока {player_name}"
+        
+        try:
+            # Создаем промпт для комплексного анализа
+            prompt = self._create_comprehensive_analysis_prompt(player_name, player_triggers, player_stats)
+            
+            # Вызываем функцию стриминга из ollama_service
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                async with client.stream("POST", "http://localhost:11434/api/chat", json={
+                    "model": "llama3.2:latest",
+                    "stream": True,
+                    "messages": [
+                        {"role": "system", "content": "Ты аналитик по выявлению мошенничества в спорте. Твоя задача - анализировать подозрительные паттерны в игре спортсменов и выявлять признаки договорных матчей или намеренного проигрыша."},
+                        {"role": "user", "content": prompt}
+                    ]
+                }) as response:
+                    analysis_text = ""
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            data = json.loads(line)
+                            if "message" in data and "content" in data["message"]:
+                                analysis_text += data["message"]["content"]
+                        except json.JSONDecodeError:
+                            continue
+                    
+                    return analysis_text if analysis_text.strip() else f"Комплексный анализ игрока {player_name}"
+                    
+        except Exception as e:
+            logger.error(f"Ошибка генерации комплексного ИИ-анализа: {e}")
+            return f"Не удалось сгенерировать комплексный анализ для игрока {player_name}"
+
+    def _create_comprehensive_analysis_prompt(self, player_name: str, player_triggers: List[PlayerTrigger], player_stats: Dict) -> str:
+        """Создает промпт для комплексного ИИ-анализа всех триггеров игрока"""
+        
+        # Описания триггеров с точки зрения мошенничества
+        trigger_descriptions = {
+            "top_performers": "стабильно высокие результаты",
+            "defeat_0_3": "подозрительно частые разгромные поражения",
+            "won_2_lost_3rd_set": "намеренные проигрыши после лидерства 2:0",
+            "early_final_exit_advanced": "подозрительные досрочные сдачи в финалах",
+            "led_1_set_lost_match": "потеря преимущества в ключевые моменты",
+            "led_2_sets_lost_match": "крайне подозрительные развороты после лидерства 2:0",
+            "psychological_breakdown": "неестественные психологические срывы",
+            "comeback_inability": "подозрительная неспособность к возвращению в игру",
+            "pressure_situations": "провалы в важных матчах",
+            "losers_50_percent": "аномально низкий процент побед"
+        }
+        
+        wins = player_stats.get('wins', 0)
+        losses = player_stats.get('losses', 0)
+        win_rate = player_stats.get('win_rate', 0)
+        matches = player_stats.get('matches_played', 0)
+        recent_form = player_stats.get('recent_form', '')
+        sets_won = player_stats.get('sets_won', 0)
+        sets_lost = player_stats.get('sets_lost', 0)
+        
+        # Формируем список проблем
+        problems_list = []
+        positive_aspects = []
+        
+        for trigger in player_triggers:
+            description = trigger_descriptions.get(trigger.trigger_type, trigger.trigger_type)
+            if trigger.trigger_type == 'top_performers':
+                positive_aspects.append(f"- {description}: {trigger.trigger_value}")
+            else:
+                problems_list.append(f"- {description}: {trigger.trigger_value}")
+        
+        problems_text = "\n".join(problems_list) if problems_list else "Серьезных проблем не выявлено"
+        positives_text = "\n".join(positive_aspects) if positive_aspects else ""
+        
+        prompt = f"""
+АНАЛИЗ ПОДОЗРИТЕЛЬНОГО ПОВЕДЕНИЯ ИГРОКА: {player_name}
+
+СТАТИСТИКА ЗА ПЕРИОД:
+- Матчей сыграно: {matches}
+- Побед: {wins} ({win_rate:.1f}%)
+- Поражений: {losses}
+- Соотношение сетов: {sets_won}:{sets_lost}
+- Последняя форма: {recent_form}
+
+ВЫЯВЛЕННЫЕ ПОДОЗРИТЕЛЬНЫЕ ПАТТЕРНЫ:
+{problems_text}
+
+ПОЛОЖИТЕЛЬНЫЕ ПОКАЗАТЕЛИ:
+{positives_text}
+
+Проанализируй этого игрока на предмет возможного мошенничества или договорных матчей. Укажи уровень подозрительности (низкий/средний/высокий) и объясни, какие паттерны могут указывать на намеренные проигрыши или подставную игру. Дай оценку в 3-4 предложениях.
+"""
