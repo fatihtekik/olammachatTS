@@ -57,6 +57,8 @@ class ExcelMatchData(BaseModel):
     турнир_sl_id: Optional[str] = None
     sl_id: Optional[str] = None
     fon_id: Optional[str] = None
+    рейтинг_игрок_1: Optional[str] = None  # Добавляем поле для рейтинга игрока 1
+    рейтинг_игрок_2: Optional[str] = None  # Добавляем поле для рейтинга игрока 2
 
 class PlayerStatsResponse(BaseModel):
     """Схема ответа со статистикой игрока"""
@@ -105,6 +107,7 @@ class AnalysisRequest(BaseModel):
     period_end: Optional[date] = None
     player_ids: Optional[List[str]] = None
     trigger_types: Optional[List[str]] = None
+    analyze_recent_upload_only: bool = False  # Анализировать только игроков из последнего загруженного файла
 
 class AnalysisResponse(BaseModel):
     """Схема ответа с результатами анализа"""
@@ -121,3 +124,12 @@ class UpdateStatsRequest(BaseModel):
     """Схема для запроса обновления статистики"""
     player_ids: Optional[List[str]] = None  # если None, обновляем всех
     force_recalculate: bool = False
+
+class TriggerAIAnalysisRequest(BaseModel):
+    """Запрос на генерацию ИИ-анализа для одного триггера"""
+    word_limit: int = 60  # Ограничение по количеству слов (сжатый, но информативный текст)
+
+class TriggerAIAnalysisResponse(BaseModel):
+    """Ответ с ИИ-анализом конкретного триггера"""
+    trigger_id: str
+    ai_analysis: str

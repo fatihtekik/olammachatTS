@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './AnalysisPage.css';
 
+// === ТИПЫ ДАННЫХ ===
 interface TriggerType {
   id: string;
   name: string;
@@ -22,7 +23,7 @@ interface Trigger {
   is_active: boolean;
   trigger_metadata?: any;
   created_at: string;
-  ai_analysis?: string; // ← Добавляем поле для ИИ-анализа
+  ai_analysis?: string;
   player_stats?: {
     matches_played: number;
     wins: number;
@@ -66,29 +67,37 @@ interface AnalysisResult {
   triggers: Trigger[];
 }
 
+interface UploadResult {
+  created_matches?: number;
+  skipped_duplicates?: number;
+  total_processed?: number;
+  created_players?: number;
+  file_player_ids?: string[];
+  errors?: string[];
+}
+
+// === ОСНОВНОЙ КОМПОНЕНТ ===
 const AnalysisPage: React.FC = () => {
+  // === СОСТОЯНИЯ ===
   const [analysisMode, setAnalysisMode] = useState<'upload' | 'database'>('upload');
   const [loading, setLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [modalOpen, setModalOpen] = useState<boolean>(false);
+  const [selectedTrigger, setSelectedTrigger] = useState<Trigger | null>(null);
+  const [singleTriggerAnalysis, setSingleTriggerAnalysis] = useState<string>('');
+  const [singleTriggerLoading, setSingleTriggerLoading] = useState<boolean>(false);
+  const SINGLE_TRIGGER_WORD_LIMIT = 60;
+  
+  // Состояния для фильтрации и анализа базы данных
   const [periodStart, setPeriodStart] = useState<string>('');
   const [periodEnd, setPeriodEnd] = useState<string>('');
   const [triggerFilter, setTriggerFilter] = useState<string>('');
   const [sortBy, setSortBy] = useState<'name' | 'rating' | 'triggers' | 'severity'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-  // Состояние для загрузки Excel
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadResult, setUploadResult] = useState<{
-    created_matches?: number;
-    skipped_duplicates?: number;
-    total_processed?: number;
-    errors?: string[];
-  } | null>(null);
-  // Состояние для модального окна
-  const [modalOpen, setModalOpen] = useState<boolean>(false);
-  const [selectedTrigger, setSelectedTrigger] = useState<Trigger | null>(null);
 
+  // === КОНСТАНТЫ ===
   const triggerTypes: TriggerType[] = [
     { id: 'top_performers', name: 'Топ игроки', description: 'Высокие результаты', severity: 'positive' },
     { id: 'losers_50_percent', name: 'Слабые результаты', description: 'Процент побед менее 50%', severity: 'medium' },
@@ -102,40 +111,79 @@ const AnalysisPage: React.FC = () => {
     { id: 'pressure_situations', name: 'Игра под давлением', description: 'Слабые результаты в важных матчах', severity: 'high' }
   ];
 
+  // === ИНИЦИАЛИЗАЦИЯ ===
   useEffect(() => {
-    loadPlayers();
+    initializePeriod();
+  }, []);
+
+  // === ОСНОВНЫЕ ФУНКЦИИ ===
+  const initializePeriod = () => {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - 3);
     
     setPeriodEnd(endDate.toISOString().split('T')[0]);
     setPeriodStart(startDate.toISOString().split('T')[0]);
-  }, []);
+  };
 
-  const loadPlayers = async () => {
+  // Загрузка Excel файла
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSelectedFile(e.target.files?.[0] || null);
+  };
+  
+  const uploadExcel = async () => {
+    if (!selectedFile) {
+      alert('Пожалуйста, выберите файл');
+      return;
+    }
+    
+    setLoading(true);
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    
     try {
-      const response = await fetch('http://localhost:8000/api/v1/match-analysis/players');
-      if (response.ok) {
-        const data = await response.json();
-        setPlayers(data.players || []);
+      const response = await fetch('http://localhost:8000/api/v1/match-analysis/upload-excel', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const err = await response.json();
+        alert(`Ошибка загрузки: ${err.detail || response.statusText}`);
+        return;
       }
+      
+      const result = await response.json();
+      setUploadResult(result);
+      console.log('📁 Результат загрузки файла:', result);
+      console.log('🎯 Игроков в файле:', result.file_player_ids?.length || 0);
     } catch (error) {
-      console.error('Error loading players:', error);
+      console.error('Error uploading Excel:', error);
+      alert('Ошибка при загрузке файла');
+    } finally {
+      setLoading(false);
     }
   };
 
+  // Анализ базы данных - ОСНОВНАЯ ФУНКЦИЯ
   const analyzeDatabase = async () => {
     if (!periodStart || !periodEnd) {
       alert('Пожалуйста, выберите период анализа');
       return;
     }
 
+    // Собираем player_ids из результата загрузки если есть
+    const playerIds = uploadResult?.file_player_ids && uploadResult.file_player_ids.length > 0
+      ? uploadResult.file_player_ids
+      : undefined;
+
     setLoading(true);
     try {
       const requestBody = {
         period_start: periodStart,
         period_end: periodEnd,
-        player_ids: selectedPlayers.length > 0 ? selectedPlayers : undefined
+        analyze_recent_upload_only: !playerIds, // если явно не передали список
+        player_ids: playerIds
       };
 
       const response = await fetch('http://localhost:8000/api/v1/match-analysis/analyze-database', {
@@ -149,6 +197,7 @@ const AnalysisPage: React.FC = () => {
       if (response.ok) {
         const result = await response.json();
         setAnalysisResult(result);
+        console.log('🎯 Результат анализа:', result);
       } else {
         const error = await response.json();
         alert(`Ошибка анализа: ${error.detail}`);
@@ -161,51 +210,13 @@ const AnalysisPage: React.FC = () => {
     }
   };
 
-  // Обработчик выбора файла
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSelectedFile(e.target.files?.[0] || null);
-  };
-  
-  // Функция загрузки Excel на сервер
-  const uploadExcel = async () => {
-    if (!selectedFile) {
-      alert('Пожалуйста, выберите файл');
-      return;
-    }
-    const formData = new FormData();
-    formData.append('file', selectedFile);
-    try {
-      const response = await fetch('http://localhost:8000/api/v1/match-analysis/upload-excel', {
-        method: 'POST',
-        body: formData,
-      });
-      if (!response.ok) {
-        const err = await response.json();
-        alert(`Ошибка загрузки: ${err.detail || response.statusText}`);
-        return;
-      }
-      const result = await response.json();
-      setUploadResult(result);
-    } catch (error) {
-      console.error('Error uploading Excel:', error);
-      alert('Ошибка при загрузке файла');
-    }
-  };
-  
-  // После загрузки, перейти к анализу базы данных и выполнить анализ
+  // После загрузки Excel, переходим к анализу
   const handleAnalyzeAfterUpload = async () => {
     setAnalysisMode('database');
     await analyzeDatabase();
   };
 
-  const handlePlayerToggle = (playerId: string) => {
-    setSelectedPlayers(prev => 
-      prev.includes(playerId) 
-        ? prev.filter(id => id !== playerId)
-        : [...prev, playerId]
-    );
-  };
-
+  // === ФУНКЦИИ ДЛЯ РАБОТЫ С ТРИГГЕРАМИ ===
   const getSeverityColor = (severity: number) => {
     switch (severity) {
       case 1: return '#28a745'; // green - low
@@ -226,11 +237,6 @@ const AnalysisPage: React.FC = () => {
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('ru-RU');
-  };
-
-  // Функция для получения всех триггеров игрока
-  const getPlayerTriggers = (playerId: string): Trigger[] => {
-    return analysisResult?.triggers.filter(t => t.player_id === playerId) || [];
   };
 
   // Функция для группировки триггеров по игрокам
@@ -294,16 +300,41 @@ const AnalysisPage: React.FC = () => {
     });
   };
 
-  // Функция для открытия модального окна с деталями триггера
+  // Функции для модального окна
   const openTriggerModal = (trigger: Trigger) => {
     setSelectedTrigger(trigger);
     setModalOpen(true);
+  // Инициируем загрузку ИИ-анализа только для этого триггера (сжатый)
+  fetchSingleTriggerAnalysis(trigger.id);
   };
 
-  // Функция для закрытия модального окна
   const closeModal = () => {
     setModalOpen(false);
     setSelectedTrigger(null);
+    setSingleTriggerAnalysis('');
+  };
+
+  const fetchSingleTriggerAnalysis = async (triggerId: string) => {
+    try {
+      setSingleTriggerLoading(true);
+      setSingleTriggerAnalysis('');
+      const response = await fetch(`http://localhost:8000/api/v1/match-analysis/triggers/${triggerId}/ai-analysis`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ word_limit: SINGLE_TRIGGER_WORD_LIMIT })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSingleTriggerAnalysis(data.ai_analysis);
+      } else {
+        const err = await response.json();
+        setSingleTriggerAnalysis(`Ошибка анализа: ${err.detail || 'неизвестно'}`);
+      }
+    } catch (e) {
+      setSingleTriggerAnalysis('Ошибка сети при запросе анализа');
+    } finally {
+      setSingleTriggerLoading(false);
+    }
   };
 
   return (
@@ -332,16 +363,55 @@ const AnalysisPage: React.FC = () => {
             <i className="bi bi-file-earmark-excel"></i>
             <h3>Загрузить Excel файл</h3>
             <p>Загрузите файл с матчами для анализа триггеров</p>
+            <div className="format-guide">
+              <h4>📋 Формат файла:</h4>
+              <p><strong>Обязательные столбцы:</strong> Дата, Игрок 1, Счёт, Игрок 2</p>
+              <p><strong>Для корректных рейтингов добавьте:</strong> Рейтинг игрок 1, Рейтинг игрок 2</p>
+              <p><strong>Дополнительно:</strong> Время, Стадия, Турнир</p>
+              <details>
+                <summary>Подробная инструкция</summary>
+                <div className="detailed-format">
+                  <p>Пример заполнения:</p>
+                  <table className="format-table">
+                    <thead>
+                      <tr>
+                        <th>Дата</th>
+                        <th>Игрок 1</th>
+                        <th>Счёт</th>
+                        <th>Игрок 2</th>
+                        <th>Рейтинг игрок 1</th>
+                        <th>Рейтинг игрок 2</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>2024-01-15</td>
+                        <td>Иванов Иван</td>
+                        <td>3:1</td>
+                        <td>Петров Петр</td>
+                        <td>1250</td>
+                        <td>1180</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </div>
             <input type="file" accept=".xlsx,.xls" onChange={handleFileChange} />
-            <button className="upload-btn" onClick={uploadExcel} disabled={!selectedFile}>
+            <button className="upload-btn" onClick={uploadExcel} disabled={!selectedFile || loading}>
               <i className="bi bi-upload"></i>
-              Загрузить
+              {loading ? 'Загружаем...' : 'Загрузить'}
             </button>
             {uploadResult && (
               <div className="upload-result">
+                <h4>📊 Результат загрузки:</h4>
                 <p>Всего строк: {uploadResult.total_processed}</p>
                 <p>Создано матчей: {uploadResult.created_matches}</p>
+                <p>Создано новых игроков: {uploadResult.created_players}</p>
                 <p>Пропущено дубликатов: {uploadResult.skipped_duplicates}</p>
+                {uploadResult.file_player_ids && (
+                  <p>🎯 Игроков в файле для анализа: <strong>{uploadResult.file_player_ids.length}</strong></p>
+                )}
                 {uploadResult.errors && uploadResult.errors.length > 0 && (
                   <div>
                     <p>Ошибки при загрузке:</p>
@@ -354,7 +424,7 @@ const AnalysisPage: React.FC = () => {
                 )}
                 <button className="analyze-btn" onClick={handleAnalyzeAfterUpload}>
                   <i className="bi bi-search"></i>
-                  Анализировать
+                  Анализировать загруженных игроков
                 </button>
               </div>
             )}
@@ -381,22 +451,12 @@ const AnalysisPage: React.FC = () => {
             </div>
 
             <div className="control-group">
-              <label>Игроки (оставьте пустым для анализа всех):</label>
-              <div className="players-selection">
-                {players.slice(0, 10).map(player => (
-                  <label key={player.id} className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={selectedPlayers.includes(player.id)}
-                      onChange={() => handlePlayerToggle(player.id)}
-                    />
-                    {player.full_name} {player.current_rating && `(${player.current_rating})`}
-                  </label>
-                ))}
-                {players.length > 10 && (
-                  <p className="players-note">Показаны первые 10 игроков. Всего в базе: {players.length}</p>
-                )}
-              </div>
+              <label>Анализ игроков:</label>
+              <p className="analysis-note">
+                ✅ Будут проанализированы <strong>ТОЛЬКО игроки из загруженного Excel файла</strong> за указанный период.
+                <br />
+                Игроки из базы данных, которых нет в файле, анализироваться не будут.
+              </p>
             </div>
 
             <button 
@@ -502,19 +562,19 @@ const AnalysisPage: React.FC = () => {
                           </div>
                           
                           <div className="player-info-section">
-                            <h3 className="player-name">{mainTrigger.player_name} рейтинг: {mainTrigger.player_rating || 'н/д'}</h3>
+                            <h3 className="player-name">{mainTrigger.player_name}</h3>
                             
                             <div className="stats-grid">
                               <div className="stat-item">
                                 <span className="stat-label">Рейтинг:</span>
-                                <span className="stat-value">{mainTrigger.player_rating || 1000}</span>
+                                <span className="stat-value">{mainTrigger.player_rating || 'н/д'}</span>
                               </div>
                               <div className="stat-item">
                                 <span className="stat-label">Побед:</span>
                                 <span className="stat-value">
                                   {mainTrigger.player_stats ? 
                                     `${mainTrigger.player_stats.wins}/${mainTrigger.player_stats.matches_played} (${mainTrigger.player_stats.win_rate.toFixed(1)}%)` : 
-                                    '40/40 (100%)'
+                                    'н/д'
                                   }
                                 </span>
                               </div>
@@ -523,7 +583,7 @@ const AnalysisPage: React.FC = () => {
                                 <span className="stat-value">
                                   {mainTrigger.player_stats ? 
                                     `${mainTrigger.player_stats.sets_won}:${mainTrigger.player_stats.sets_lost}` : 
-                                    '15:5'
+                                    'н/д'
                                   }
                                 </span>
                               </div>
@@ -540,47 +600,47 @@ const AnalysisPage: React.FC = () => {
                                         {result}
                                       </span>
                                     )) :
-                                    // Fallback для статических данных
-                                    ['W', 'W', 'W', 'W', 'W'].map((result, index) => (
-                                      <span key={index} className="form-win">{result}</span>
-                                    ))
+                                    // Заглушка если нет данных
+                                    <span className="no-data">н/д</span>
                                   }
                                 </div>
                               </div>
                             </div>
 
-                            {/* Теги всех триггеров игрока */}
+                            {/* Анализ конкретного триггера игрока */}
                             <div className="player-triggers">
-                              <h4>Триггеры игрока:</h4>
+                              <h4>Найденные проблемы:</h4>
                               <div className="triggers-tags">
-                                {playerTriggers.map((playerTrigger, index) => (
-                                  <button
-                                    key={index}
-                                    className={`trigger-tag ${playerTrigger.trigger_type === 'top_performers' ? 'trigger-tag-positive' : 'trigger-tag-negative'}`}
-                                    onClick={() => openTriggerModal(playerTrigger)}
-                                    title={triggerTypes.find(t => t.id === playerTrigger.trigger_type)?.description}
-                                  >
-                                    {triggerTypes.find(t => t.id === playerTrigger.trigger_type)?.name || playerTrigger.trigger_type}
-                                  </button>
-                                ))}
+                                {playerTriggers.map((playerTrigger, index) => {
+                                  const triggerInfo = triggerTypes.find(t => t.id === playerTrigger.trigger_type);
+                                  return (
+                                    <button
+                                      key={index}
+                                      className={`trigger-tag ${playerTrigger.trigger_type === 'top_performers' ? 'trigger-tag-positive' : 'trigger-tag-negative'}`}
+                                      onClick={() => openTriggerModal(playerTrigger)}
+                                      title={triggerInfo?.description}
+                                    >
+                                      {triggerInfo?.name || playerTrigger.trigger_type}
+                                    </button>
+                                  );
+                                })}
                               </div>
                             </div>
                           </div>
 
                           <div className="analysis-text-section">
                             <div className="analysis-text">
-                              <div className="detailed-analysis">
-                                {/* Комплексный ИИ-анализ всех триггеров игрока */}
-                                {mainTrigger.ai_analysis ? (
+                              {/* Анализ основного триггера */}
+                              <div className="main-trigger-analysis">
+                                <h5>Основная проблема: {triggerTypes.find(t => t.id === mainTrigger.trigger_type)?.name}</h5>
+                                <p className="trigger-description">
+                                  {mainTrigger.trigger_value}
+                                </p>
+                                {mainTrigger.ai_analysis && (
                                   <div className="ai-analysis">
-                                    <p><strong>Анализ ИИ</strong></p>
+                                    <p><strong>Анализ ИИ:</strong></p>
                                     <p>{mainTrigger.ai_analysis}</p>
                                   </div>
-                                ) : (
-                                  <p>
-                                    Анализ выявленных паттернов поможет определить уровень подозрительности игрока 
-                                    и возможные признаки договорных матчей или намеренных проигрышей.
-                                  </p>
                                 )}
                               </div>
 
@@ -641,6 +701,15 @@ const AnalysisPage: React.FC = () => {
                     <p>{selectedTrigger.ai_analysis}</p>
                   </div>
                 )}
+                <div className="modal-ai-analysis">
+                  <h5>Краткий анализ этого триггера:</h5>
+                  {singleTriggerLoading ? (
+                    <p>Генерируем краткий анализ...</p>
+                  ) : (
+                    <p>{singleTriggerAnalysis || 'Нет данных'}</p>
+                  )}
+                  <small>Лимит слов: {SINGLE_TRIGGER_WORD_LIMIT}</small>
+                </div>
 
                 <div className="trigger-period">
                   <p><strong>Период:</strong> {formatDate(selectedTrigger.period_start)} - {formatDate(selectedTrigger.period_end)}</p>

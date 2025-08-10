@@ -6,7 +6,7 @@ from app.services.match_analysis_service import MatchAnalysisService
 from app.schemas.match_analysis import (
     ExcelMatchData, AnalysisRequest, AnalysisResponse,
     PlayerResponse, MatchResponse, TriggerResponse,
-    UpdateStatsRequest
+    UpdateStatsRequest, TriggerAIAnalysisRequest, TriggerAIAnalysisResponse
 )
 from app.models.match import Player, Match, PlayerTrigger, PlayerStats
 import pandas as pd
@@ -66,10 +66,31 @@ async def upload_excel_file(
         excel_data = []
         errors = []
         
+        # Нормализуем названия столбцов (убираем лишние пробелы)
+        normalized_columns = {c.strip(): c for c in df.columns}
+
+        # Варианты названий колонок рейтингов
+        rating1_col = None
+        rating2_col = None
+        for cand in ["Рейтинг игрок 1", "Рейтинг игрока 1", "Рейтинг Игрок 1", "Рейтинг Игрока 1"]:
+            if cand in normalized_columns:
+                rating1_col = normalized_columns[cand]
+                break
+        for cand in ["Рейтинг игрок 2", "Рейтинг игрока 2", "Рейтинг Игрок 2", "Рейтинг Игрока 2"]:
+            if cand in normalized_columns:
+                rating2_col = normalized_columns[cand]
+                break
+
+        score_col = None
+        for cand in ["Счёт", "Счет", "СЧЁТ", "СЧЕТ"]:
+            if cand in normalized_columns:
+                score_col = normalized_columns[cand]
+                break
+
         for idx, row in df.iterrows():
             try:
-                # Проверяем обязательные поля
-                required_fields = ['Дата', 'Игрок 1', 'Счёт', 'Игрок 2']
+                # Проверяем обязательные поля (делаем счёт необязательным)
+                required_fields = ['Дата', 'Игрок 1', 'Игрок 2']
                 missing_fields = [field for field in required_fields if field not in df.columns or pd.isna(row.get(field))]
                 
                 if missing_fields:
@@ -77,18 +98,39 @@ async def upload_excel_file(
                     errors.append(error_msg)
                     logger.warning(error_msg)
                     continue
-                
+                # Получаем счёт (если отсутствует колонка, ставим заглушку)
+                raw_score = None
+                if score_col:
+                    raw_score = row.get(score_col)
+                score_value = str(raw_score) if pd.notna(raw_score) and raw_score not in [None, 'nan'] else '0:0'
+
+                # Извлекаем рейтинги с учётом альтернативных названий колонок
+                raw_rating1 = row.get(rating1_col) if rating1_col else None
+                raw_rating2 = row.get(rating2_col) if rating2_col else None
+
+                def normalize_rating(val):
+                    if pd.isna(val) or val in [None, '']:
+                        return None
+                    try:
+                        # Заменяем запятую на точку и приводим к float
+                        cleaned = str(val).replace(',', '.').strip()
+                        return cleaned
+                    except Exception:
+                        return None
+
                 match_data = ExcelMatchData(
                     дата=str(row.get('Дата', '')),
                     время=str(row.get('Время', '')) if pd.notna(row.get('Время')) else None,
                     игрок_1=str(row.get('Игрок 1', '')),
-                    счёт=str(row.get('Счёт', '')),
+                    счёт=score_value,
                     игрок_2=str(row.get('Игрок 2', '')),
                     стадия=str(row.get('Стадия', '')) if pd.notna(row.get('Стадия')) else None,
                     турнир=str(row.get('Турнир', '')) if pd.notna(row.get('Турнир')) else None,
                     турнир_sl_id=str(row.get('Турнир SL-ID', '')) if pd.notna(row.get('Турнир SL-ID')) else None,
                     sl_id=str(row.get('SL-ID', '')) if pd.notna(row.get('SL-ID')) else None,
-                    fon_id=str(row.get('FON-ID', '')) if pd.notna(row.get('FON-ID')) else None
+                    fon_id=str(row.get('FON-ID', '')) if pd.notna(row.get('FON-ID')) else None,
+                    рейтинг_игрок_1=normalize_rating(raw_rating1),
+                    рейтинг_игрок_2=normalize_rating(raw_rating2)
                 )
                 excel_data.append(match_data)
             except Exception as e:
@@ -404,6 +446,57 @@ async def analyze_database_matches(
     except Exception as e:
         logger.error(f"❌ Ошибка при анализе базы данных: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Ошибка при анализе: {str(e)}")
+
+@router.post("/triggers/{trigger_id}/ai-analysis", response_model=TriggerAIAnalysisResponse)
+async def generate_single_trigger_ai_analysis(
+    trigger_id: str,
+    request: TriggerAIAnalysisRequest,
+    db: Session = Depends(get_db)
+):
+    """Генерация ИИ-анализа только для одного триггера (краткий вывод)
+    Возвращает сжатый (по количеству слов) анализ без потери ключевой информации.
+    """
+    try:
+        trigger = db.query(PlayerTrigger).filter(PlayerTrigger.id == trigger_id).first()
+        if not trigger:
+            raise HTTPException(status_code=404, detail="Триггер не найден")
+
+        player = db.query(Player).filter(Player.id == trigger.player_id).first()
+
+        # Минимальная статистика игрока для контекста
+        service = MatchAnalysisService(db)
+        player_stats = service._get_player_stats_for_trigger(trigger.player_id, trigger.period_start, trigger.period_end)
+        if not player_stats:
+            player_stats = {
+                'wins': 0, 'losses': 0, 'win_rate': 0.0, 'matches_played': 0, 'recent_form': ''
+            }
+
+        # Используем внутренний метод генерации анализа (без комплексного)
+        full_text = await service._generate_ai_analysis(
+            trigger.trigger_type,
+            player.full_name if player else 'Неизвестный игрок',
+            trigger.trigger_value,
+            player_stats or {}
+        )
+
+        # Ограничиваем по количеству слов
+        words = full_text.split()
+        if len(words) > request.word_limit:
+            # Сохраняем первую часть и добавляем многоточие
+            trimmed = ' '.join(words[:request.word_limit]) + '...'
+        else:
+            trimmed = full_text
+
+        # Обновляем запись в БД (опционально можно сохранить в trigger_metadata)
+        trigger.trigger_metadata = trigger.trigger_metadata or '{}'
+        db.commit()
+
+        return TriggerAIAnalysisResponse(trigger_id=trigger.id, ai_analysis=trimmed)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при генерации ИИ-анализа триггера {trigger_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка генерации анализа")
 
 @router.get("/triggers")
 async def get_all_triggers(

@@ -23,10 +23,11 @@ class MatchAnalysisService:
     
     def __init__(self, db: Session):
         self.db = db
-        
+        self.last_uploaded_player_ids = []  # Инстансовый список ID игроков из последнего загруженного файла
+
         # Добавляем функцию для ИИ-анализа
         self._ai_analysis_enabled = True  # Флаг для включения/выключения ИИ
-        
+
         self.trigger_methods = {
             "top_performers": self._analyze_top_performers,
             "losers_50_percent": self._analyze_losers_50_percent,
@@ -64,6 +65,7 @@ class MatchAnalysisService:
             created_matches = 0
             skipped_duplicates = 0
             errors = []
+            file_player_ids = set()  # Отслеживаем ID игроков из этого файла
             
             logger.info(f"🔄 Начинаем обработку {len(excel_data)} строк из Excel...")
             
@@ -72,8 +74,13 @@ class MatchAnalysisService:
                     logger.info(f"📝 Обрабатываем строку {idx + 1}: {match_data.игрок_1} vs {match_data.игрок_2}")
                     
                     # Получаем или создаем игроков
-                    player1, player1_created = await self._get_or_create_player(match_data.игрок_1)
-                    player2, player2_created = await self._get_or_create_player(match_data.игрок_2)
+                    # Обрабатываем игроков с рейтингами
+                    player1, player1_created = await self._get_or_create_player(match_data.игрок_1, match_data.рейтинг_игрок_1)
+                    player2, player2_created = await self._get_or_create_player(match_data.игрок_2, match_data.рейтинг_игрок_2)
+                    
+                    # Добавляем игроков в список из файла
+                    file_player_ids.add(player1.id)
+                    file_player_ids.add(player2.id)
                     
                     # Увеличиваем счетчик созданных игроков
                     if player1_created:
@@ -103,34 +110,64 @@ class MatchAnalysisService:
                     error_msg = f"Строка {idx + 1}: Ошибка при обработке матча {match_data.игрок_1} vs {match_data.игрок_2}: {str(e)}"
                     errors.append(error_msg)
                     logger.error(f"❌ {error_msg}")
-            
+            # Сохраняем список игроков из этого файла (в рамках текущего объекта)
+            self.last_uploaded_player_ids = list(file_player_ids)
+            logger.info(f"💾 Сохранен список из {len(file_player_ids)} игроков из загруженного файла")
+
             result = {
                 "created_players": created_players,
                 "created_matches": created_matches,
                 "skipped_duplicates": skipped_duplicates,
                 "total_processed": len(excel_data),
+                "file_player_ids": list(file_player_ids),  # Возвращаем список ID игроков из файла
                 "errors": errors,
                 "success": True
             }
-            
+
             logger.info(f"📊 Результат обработки:")
             logger.info(f"  - Всего строк: {len(excel_data)}")
             logger.info(f"  - Создано матчей: {created_matches}")
             logger.info(f"  - Пропущено дубликатов: {skipped_duplicates}")
+            logger.info(f"  - Игроков в файле: {len(file_player_ids)}")
             logger.info(f"  - Ошибок: {len(errors)}")
-            
+
             return result
             
         except Exception as e:
             logger.error(f"💥 Ошибка при обработке Excel данных: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    async def _get_or_create_player(self, player_name: str) -> tuple[Player, bool]:
-        """Получает существующего игрока или создает нового. Возвращает (игрок, был_создан)"""
+    async def _get_or_create_player(self, player_name: str, rating_str: Optional[str] = None) -> tuple[Player, bool]:
+        """Получает существующего игрока или создает нового с рейтингом"""
+        # Извлекаем рейтинг из отдельного поля или из имени игрока
+        rating = 1000  # значение по умолчанию
+        
+        # Сначала пробуем получить рейтинг из отдельного поля
+        if rating_str:
+            try:
+                cleaned = rating_str.replace(',', '.').strip()
+                rating_float = float(cleaned)
+                rating = int(round(rating_float))  # Округляем до ближайшего
+                logger.info(f"📊 Рейтинг из поля: {rating_str} -> {rating}")
+            except (ValueError, AttributeError):
+                logger.warning(f"Не удалось извлечь рейтинг из поля рейтинга: {rating_str}")
+        
+        # Если не получилось, пробуем извлечь из имени (для обратной совместимости)
+        if rating == 1000:  # Только если не получили рейтинг из поля
+            name_parts = player_name.split('rating:')
+            if len(name_parts) > 1:
+                try:
+                    rating_from_name = float(name_parts[1].strip())
+                    rating = int(rating_from_name)  # Округляем до целого
+                    player_name = name_parts[0].strip()  # Очищаем имя от рейтинга
+                    logger.info(f"📊 Рейтинг из имени: {rating_from_name} -> {rating} для игрока {player_name}")
+                except ValueError:
+                    logger.warning(f"Не удалось извлечь рейтинг из имени игрока: {player_name}")
+
         player = self.db.query(Player).filter(Player.full_name == player_name).first()
         
         if not player:
-            player = Player(full_name=player_name)
+            player = Player(full_name=player_name, current_rating=rating)
             self.db.add(player)
             self.db.commit()
             self.db.refresh(player)
@@ -140,7 +177,17 @@ class MatchAnalysisService:
             self.db.add(stats)
             self.db.commit()
             
+            logger.info(f"✅ Создан новый игрок: {player_name} с рейтингом {rating}")
             return player, True  # Игрок был создан
+        else:
+            # Обновляем рейтинг если:
+            # 1) У игрока дефолт 1000, а новый рейтинг != 1000
+            # 2) Рейтинг изменился более чем на 0 (любое отличие) и новый != 1000
+            if rating != 1000 and (player.current_rating == 1000 or player.current_rating != rating):
+                old_rating = player.current_rating
+                player.current_rating = rating
+                self.db.commit()
+                logger.info(f"🔄 Обновлен рейтинг игрока {player_name}: {old_rating} -> {rating}")
         
         return player, False  # Игрок уже существовал
     
@@ -299,12 +346,35 @@ class MatchAnalysisService:
             
             # Получаем игроков для анализа
             query = self.db.query(Player)
+            # ПРИОРИТЕТ: явно переданные player_ids из запроса (фронт отправляет file_player_ids после загрузки)
             if request.player_ids:
                 query = query.filter(Player.id.in_(request.player_ids))
-                logger.info(f"👥 Анализируем указанных игроков: {len(request.player_ids)}")
+                logger.info(f"👥 Анализируем указанных игроков: {len(request.player_ids)} (переданы в запросе)")
+            elif request.analyze_recent_upload_only and self.last_uploaded_player_ids:
+                query = query.filter(Player.id.in_(self.last_uploaded_player_ids))
+                logger.info(f"👥 Анализ игроков только из последней загрузки (в пределах жизненного цикла сервиса): {len(self.last_uploaded_player_ids)}")
+            elif request.analyze_recent_upload_only:
+                logger.warning("⚠️  analyze_recent_upload_only=true, но список self.last_uploaded_player_ids пуст. Передайте player_ids в запросе.")
+            else:
+                # Анализируем указанных игроков
+                # Анализируем всех игроков из БД (старое поведение)
+                logger.info(f"👥 Анализируем всех игроков из базы данных")
             
             players = query.all()
             logger.info(f"👥 Найдено игроков для анализа: {len(players)}")
+            
+            if not players:
+                logger.warning("⚠️  Не найдено игроков для анализа!")
+                return AnalysisResponse(
+                    period_start=start_date,
+                    period_end=end_date,
+                    total_players=0,
+                    total_matches=0,
+                    triggers_found=0,
+                    top_performers=[],
+                    problem_players=[],
+                    triggers=[]
+                )
             
             total_triggers = 0
             
@@ -564,7 +634,10 @@ class MatchAnalysisService:
         return problem_players
     
     async def _get_all_triggers(self, start_date: date, end_date: date) -> List[dict]:
-        """Получает все триггеры за период с детальной статистикой игроков и ИИ-анализом"""
+        """Получает все триггеры за период.
+        Возвращает список со статистикой игрока и ПЕРСОНАЛЬНЫМ ИИ-анализом КАЖДОГО триггера (как было раньше).
+        Чтобы не перегружать модель, ограничиваемся первыми 8 триггерами игрока для ИИ.
+        """
         triggers = self.db.query(PlayerTrigger).join(Player).filter(
             and_(
                 PlayerTrigger.period_start == start_date,
@@ -581,20 +654,22 @@ class MatchAnalysisService:
         
         result = []
         
-        # Генерируем ИИ-анализ для каждого игрока (всех его триггеров сразу)
+        # Генерируем ИИ-анализ отдельно для КАЖДОГО триггера (старое поведение)
         for player_id, player_triggers in players_triggers.items():
             player = self.db.query(Player).filter(Player.id == player_id).first()
-            player_stats = self._get_player_stats_for_trigger(player_id, start_date, end_date)
-            
-            # Генерируем общий ИИ-анализ для всех триггеров игрока
-            ai_analysis = await self._generate_player_comprehensive_analysis(
-                player.full_name if player else 'Неизвестный игрок',
-                player_triggers,
-                player_stats or {}
-            )
-            
-            # Добавляем все триггеры игрока в результат с общим анализом
-            for trigger in player_triggers:
+            player_stats = self._get_player_stats_for_trigger(player_id, start_date, end_date) or {}
+
+            for idx, trigger in enumerate(player_triggers):
+                if idx < 8:  # лимитируем количество обращений к модели
+                    ai_text = await self._generate_ai_analysis(
+                        trigger.trigger_type,
+                        player.full_name if player else 'Неизвестный игрок',
+                        trigger.trigger_value,
+                        player_stats
+                    )
+                else:
+                    ai_text = "Пропущен детальный ИИ-анализ (лимит)"
+
                 trigger_dict = {
                     'id': trigger.id,
                     'player_id': trigger.player_id,
@@ -610,7 +685,7 @@ class MatchAnalysisService:
                     'trigger_metadata': trigger.trigger_metadata,
                     'created_at': trigger.created_at,
                     'player_stats': player_stats if player_stats else None,
-                    'ai_analysis': ai_analysis  # ← Общий анализ для всех триггеров игрока!
+                    'ai_analysis': ai_text
                 }
                 result.append(trigger_dict)
         

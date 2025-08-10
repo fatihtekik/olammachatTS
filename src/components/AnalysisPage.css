@@ -56,7 +56,8 @@
   padding: 40px;
   text-align: center;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  max-width: 400px;
+  max-width: 600px;
+  width: 100%;
 }
 
 .upload-card i {
@@ -74,6 +75,76 @@
 .upload-card p {
   color: #666;
   margin-bottom: 30px;
+}
+
+.format-guide {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 20px 0;
+  text-align: left;
+}
+
+.format-guide h4 {
+  color: #333;
+  margin-bottom: 15px;
+  font-size: 1.1rem;
+}
+
+.format-guide p {
+  margin: 8px 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.format-guide strong {
+  color: #333;
+}
+
+.format-guide details {
+  margin-top: 15px;
+}
+
+.format-guide summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #667eea;
+  padding: 5px 0;
+}
+
+.format-guide summary:hover {
+  color: #5a67d8;
+}
+
+.detailed-format {
+  margin-top: 15px;
+  padding: 15px;
+  background: white;
+  border-radius: 6px;
+}
+
+.format-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 0.8rem;
+}
+
+.format-table th,
+.format-table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+}
+
+.format-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+}
+
+.format-table td {
+  font-family: monospace;
 }
 
 .upload-btn {
@@ -1016,6 +1087,26 @@
   color: white;
   border-radius: 20px;
   font-size: 0.9rem;
+}
+
+/* Стили для заметок */
+.analysis-note {
+  color: #666;
+  font-style: italic;
+  font-size: 0.9rem;
+  margin-top: 10px;
+  padding: 15px;
+  background: #f0f8ff;
+  border-left: 4px solid #667eea;
+  border-radius: 4px;
+}
+
+.no-data {
+  color: #999;
+  font-style: italic;
+}
+
+.main-trigger-analysis h5 {
   font-weight: 600;
   margin-bottom: 16px;
 }
@@ -1085,4 +1176,70 @@
 
 .ai-analysis p:last-child {
   margin-bottom: 0;
+}
+
+/* Стили для инструкции по формату файла */
+.format-guide {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  text-align: left;
+}
+
+.format-guide h4 {
+  margin: 0 0 12px 0;
+  color: #333;
+  font-size: 1.1rem;
+}
+
+.format-guide p {
+  margin: 8px 0;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.format-guide strong {
+  color: #333;
+}
+
+.detailed-format {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.format-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 0.85rem;
+}
+
+.format-table th,
+.format-table td {
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.format-table th {
+  background: #f5f5f5;
+  font-weight: 600;
+}
+
+.analysis-note {
+  color: #666;
+  font-style: italic;
+  margin: 8px 0;
+  padding: 12px;
+  background: #f8f9fa;
+  border-left: 4px solid #667eea;
+  border-radius: 4px;
+}
+
+.no-data {
+  color: #999;
+  font-style: italic;
 }
