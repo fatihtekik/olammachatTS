@@ -158,9 +158,10 @@ const AnalysisPage: React.FC = () => {
       console.log('📁 Результат загрузки файла:', result);
       console.log('🎯 Игроков в файле:', result.file_player_ids?.length || 0);
     } catch (error) {
-      console.error('Error uploading Excel:', error);
-      alert('Ошибка при загрузке файла');
-    } finally {
+  console.error('Error uploading Excel!!:', error);
+  alert('Ошибка при загрузке файла: ' + (error as Error).message);
+}
+ finally {
       setLoading(false);
     }
   };

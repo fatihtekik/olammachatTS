@@ -157,7 +157,7 @@ const ExcelUploadPage: React.FC = () => {
       }
       
     } catch (err: any) {
-      setError(err.message || 'Ошибка при загрузке файла');
+      setError(err.message || 'Ошибка при загрузке файлаЁЁЁ');
       setUploadResult({
         success: false,
         error: err.message || 'Неизвестная ошибка'

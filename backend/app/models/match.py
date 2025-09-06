@@ -13,7 +13,7 @@ class PlayerBase(SQLModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-class Player(PlayerBase, table=True):
+class Player(PlayerBase, table=True):  # РАБОТАЕТ
     """Модель игрока в базе данных"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     
@@ -89,6 +89,7 @@ class MatchBase(SQLModel):
 class Match(MatchBase, table=True):
     """Модель матча в базе данных"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    time: Optional[time_type] = None
     player1_id: str = Field(foreign_key="player.id")
     player2_id: str = Field(foreign_key="player.id")
     winner_id: Optional[str] = Field(foreign_key="player.id")
@@ -166,7 +167,7 @@ class PlayerTriggerBase(SQLModel):
     trigger_metadata: Optional[str] = Field(default=None)  # JSON строка для метаданных
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
-class PlayerTrigger(PlayerTriggerBase, table=True):
+class PlayerTrigger(PlayerTriggerBase, table=True): 
     """Модель триггера игрока"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     player_id: str = Field(foreign_key="player.id")

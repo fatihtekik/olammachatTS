@@ -9,7 +9,12 @@ from app.core.config import settings
 from app.services.ollama_service import test_connection
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    filename="logs.txt",          # файл для записи логов
+    level=logging.INFO,           # уровень логирования
+    format="%(asctime)s - %(levelname)s - %(message)s",  # формат
+    encoding="utf-8"              # чтобы не было проблем с кириллицей
+)
 logger = logging.getLogger(__name__)
 
 # Создание экземпляра FastAPI
@@ -22,7 +27,7 @@ app = FastAPI(
 # Настройка CORS для взаимодействия с фронтендом
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Разрешаем доступ с любых доменов  
+    allow_origins=["http://localhost:3000"],  # Разрешаем доступ с любых доменов  
     allow_credentials=True,
     allow_methods=["*"],  # Разрешаем все HTTP методы
     allow_headers=["*"],  # Разрешаем все заголовки

@@ -1,6 +1,8 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sympy import re
 from app.database.db import get_db
 from app.services.match_analysis_service import MatchAnalysisService
 from app.schemas.match_analysis import (
@@ -12,159 +14,148 @@ from app.models.match import Player, Match, PlayerTrigger, PlayerStats
 import pandas as pd
 import io
 import logging
-
+from fastapi.encoders import jsonable_encoder
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/match-analysis", tags=["Match Analysis"])
 
-@router.post("/upload-excel", response_model=dict)
+
+
+@router.post("/upload-excel")  # РАБОТАЕТ
 async def upload_excel_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """
-    Загрузка Excel файла с матчами
-    
-    Публичный эндпоинт - доступен всем пользователям без аутентификации.
-    Позволяет загружать Excel файлы с данными о матчах для последующего анализа.
-    """
-    logger.info(f"📁 Получен файл для загрузки: {file.filename}")
-    
+    print(f"📁 Получен файл для загрузки: {file.filename}")
+
     try:
-        # Проверяем тип файла
         if not file.filename.endswith(('.xlsx', '.xls')):
-            logger.warning(f"❌ Неподдерживаемый тип файла: {file.filename}")
+            print(f"❌ Неподдерживаемый тип файла: {file.filename}")
             raise HTTPException(status_code=400, detail="Поддерживаются только Excel файлы (.xlsx, .xls)")
-        
-        # Читаем файл
-        logger.info("📖 Читаем содержимое файла...")
+
+        print("📖 Читаем содержимое файла...")
         contents = await file.read()
-        logger.info(f"📏 Размер файла: {len(contents)} байт")
-        
-        # Проверяем, что pandas доступен
+        print(f"📏 Размер файла: {len(contents)} байт")
+
         try:
-            import pandas as pd
-            logger.info("✅ Pandas доступен")
-        except ImportError as e:
-            logger.error("❌ Pandas не установлен")
+            import pandas as pd, io, re
+            print("✅ Pandas доступен")
+        except ImportError:
+            print("❌ Pandas не установлен")
             raise HTTPException(status_code=500, detail="Pandas не установлен на сервере. Обратитесь к администратору.")
-        
-        # Читаем Excel файл
+
         try:
             df = pd.read_excel(io.BytesIO(contents))
-            logger.info(f"📊 Excel файл прочитан. Строк: {len(df)}, Столбцов: {len(df.columns)}")
-            logger.info(f"🏷️  Столбцы: {list(df.columns)}")
+            # Нормализуем заголовки сразу и один раз
+            df.rename(columns=lambda x: str(x).strip(), inplace=True)
+            print(f"📊 Excel файл прочитан. Строк: {len(df)}, Столбцов: {len(df.columns)}")
+            print(f"🏷️  Столбцы: {list(df.columns)}")
         except Exception as e:
-            logger.error(f"❌ Ошибка чтения Excel: {str(e)}")
+            print(f"❌ Ошибка чтения Excel: {str(e)}")
             raise HTTPException(status_code=400, detail=f"Не удалось прочитать Excel файл: {str(e)}")
-        
+
         if len(df) == 0:
-            logger.warning("⚠️  Excel файл пустой")
+            print("⚠️  Excel файл пустой")
             raise HTTPException(status_code=400, detail="Excel файл не содержит данных")
-        
-        # Конвертируем в список объектов ExcelMatchData
+
+        # Проверяем обязательные колонки 1 раз
+        required_cols = ['Дата', 'Игрок 1', 'Игрок 2']
+        missing_cols = [c for c in required_cols if c not in df.columns]
+        if missing_cols:
+            raise HTTPException(status_code=400, detail=f"В Excel отсутствуют колонки: {missing_cols}")
+
+        # Находим колонку счёта
+        score_col = next((c for c in ["Счёт", "Счет", "СЧЁТ", "СЧЕТ"] if c in df.columns), None)
+        if not score_col:
+            raise HTTPException(status_code=400, detail="В Excel нет колонки 'Счёт'")
+
+        # Вспомогательные парсеры
+        import re
+
+        def split_name_and_rating(val):
+            if val is None:
+                return "", None
+            s = str(val)
+            m = re.search(r"(.+?)\s+rating[: ]+([\d.,]+)", s, re.IGNORECASE)
+            if m:
+                name = m.group(1).strip()
+                rating = m.group(2).replace(",", ".")
+                return name, rating
+            return s.strip(), None
+
+        def split_score(val):
+            if val is None:
+                return "0:0", None
+            s = str(val)
+            # основной счёт — первые символы формата X:Y
+            m = re.match(r"\s*([0-9]+:[0-9]+)", s)
+            main = m.group(1) if m else s.strip()
+            # детали в скобках (если понадобятся позже)
+            m2 = re.search(r"\((.+)\)", s)
+            details = m2.group(0) if m2 else None  # например "(11-7, 9-11, ...)"
+            return main, details
+
+        # Конвертируем строки
         excel_data = []
         errors = []
-        
-        # Нормализуем названия столбцов (убираем лишние пробелы)
-        normalized_columns = {c.strip(): c for c in df.columns}
-
-        # Варианты названий колонок рейтингов
-        rating1_col = None
-        rating2_col = None
-        for cand in ["Рейтинг игрок 1", "Рейтинг игрока 1", "Рейтинг Игрок 1", "Рейтинг Игрока 1"]:
-            if cand in normalized_columns:
-                rating1_col = normalized_columns[cand]
-                break
-        for cand in ["Рейтинг игрок 2", "Рейтинг игрока 2", "Рейтинг Игрок 2", "Рейтинг Игрока 2"]:
-            if cand in normalized_columns:
-                rating2_col = normalized_columns[cand]
-                break
-
-        score_col = None
-        for cand in ["Счёт", "Счет", "СЧЁТ", "СЧЕТ"]:
-            if cand in normalized_columns:
-                score_col = normalized_columns[cand]
-                break
 
         for idx, row in df.iterrows():
             try:
-                # Проверяем обязательные поля (делаем счёт необязательным)
-                required_fields = ['Дата', 'Игрок 1', 'Игрок 2']
-                missing_fields = [field for field in required_fields if field not in df.columns or pd.isna(row.get(field))]
-                
-                if missing_fields:
-                    error_msg = f"Строка {idx + 1}: отсутствуют поля {missing_fields}"
-                    errors.append(error_msg)
-                    logger.warning(error_msg)
-                    continue
-                # Получаем счёт (если отсутствует колонка, ставим заглушку)
-                raw_score = None
-                if score_col:
-                    raw_score = row.get(score_col)
-                score_value = str(raw_score) if pd.notna(raw_score) and raw_score not in [None, 'nan'] else '0:0'
-
-                # Извлекаем рейтинги с учётом альтернативных названий колонок
-                raw_rating1 = row.get(rating1_col) if rating1_col else None
-                raw_rating2 = row.get(rating2_col) if rating2_col else None
-
-                def normalize_rating(val):
-                    if pd.isna(val) or val in [None, '']:
-                        return None
-                    try:
-                        # Заменяем запятую на точку и приводим к float
-                        cleaned = str(val).replace(',', '.').strip()
-                        return cleaned
-                    except Exception:
-                        return None
+                main_score, _details = split_score(row.get(score_col))
+                p1, r1 = split_name_and_rating(row.get('Игрок 1'))
+                p2, r2 = split_name_and_rating(row.get('Игрок 2'))
 
                 match_data = ExcelMatchData(
                     дата=str(row.get('Дата', '')),
                     время=str(row.get('Время', '')) if pd.notna(row.get('Время')) else None,
-                    игрок_1=str(row.get('Игрок 1', '')),
-                    счёт=score_value,
-                    игрок_2=str(row.get('Игрок 2', '')),
+                    игрок_1=p1,
+                    счёт=main_score,             # <-- только основной счёт "3:2"
+                    игрок_2=p2,
                     стадия=str(row.get('Стадия', '')) if pd.notna(row.get('Стадия')) else None,
                     турнир=str(row.get('Турнир', '')) if pd.notna(row.get('Турнир')) else None,
                     турнир_sl_id=str(row.get('Турнир SL-ID', '')) if pd.notna(row.get('Турнир SL-ID')) else None,
                     sl_id=str(row.get('SL-ID', '')) if pd.notna(row.get('SL-ID')) else None,
                     fon_id=str(row.get('FON-ID', '')) if pd.notna(row.get('FON-ID')) else None,
-                    рейтинг_игрок_1=normalize_rating(raw_rating1),
-                    рейтинг_игрок_2=normalize_rating(raw_rating2)
+                    рейтинг_игрок_1=r1,
+                    рейтинг_игрок_2=r2
                 )
                 excel_data.append(match_data)
             except Exception as e:
-                error_msg = f"Строка {idx + 1}: {str(e)}"
-                errors.append(error_msg)
-                logger.warning(error_msg)
+                err = f"Строка {idx+1}: {e.__class__.__name__}: {e}"
+                print("⚠️", err)
+                errors.append(err)
                 continue
-        
+        # saved = db.query(Match).limit(5).all()
+        # for m in saved:
+        #     print(m.id, m.date, m.player1_id, m.player2_id, m.score)
         if not excel_data:
-            logger.error("❌ Не удалось обработать ни одной строки из Excel")
+            print("❌ Не удалось обработать ни одной строки из Excel")
+            if errors:
+                print("Примеры ошибок:", errors[:5])
             raise HTTPException(status_code=400, detail="Не удалось обработать данные из Excel файла")
-        
-        logger.info(f"✅ Обработано {len(excel_data)} строк из {len(df)}")
-        
-        # Обрабатываем данные
-        logger.info("🔄 Начинаем обработку данных...")
+
+        print(f"✅ Обработано {len(excel_data)} строк из {len(df)}")
+
+        print(f"🔄 Начинаем обработку данных {excel_data}🔄")
         service = MatchAnalysisService(db)
         result = await service.process_excel_data(excel_data)
-        
-        # Добавляем ошибки парсинга в результат
+
         if errors:
-            if 'errors' not in result:
-                result['errors'] = []
-            result['errors'].extend(errors)
+            result.setdefault('errors', []).extend(errors)
+
+        print(f"🎉 Обработка завершена: {result}")
         
-        logger.info(f"🎉 Обработка завершена: {result}")
-        return result
-        
+        encoded = jsonable_encoder(result)
+        print("📋📋📋 Игроков в файле (encoded):", encoded)
+        # пусть FastAPI сам сериализует — просто вернём примитивную структуру
+        return JSONResponse(content=encoded)
+
     except HTTPException:
-        # Пробрасываем HTTP исключения как есть
         raise
     except Exception as e:
-        logger.error(f"💥 Неожиданная ошибка при загрузке Excel файла: {str(e)}", exc_info=True)
+        print(f"💥 Неожиданная ошибка при загрузке Excel файла: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
+
 
 @router.post("/update-stats", response_model=dict)
 async def update_player_stats(
@@ -423,7 +414,7 @@ async def ping():
         }
     }
 
-@router.post("/analyze-database")
+@router.post("/analyze-database") # РАБОТАЕТ
 async def analyze_database_matches(
     request: AnalysisRequest,
     db: Session = Depends(get_db)

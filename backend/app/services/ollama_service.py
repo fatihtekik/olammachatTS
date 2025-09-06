@@ -94,6 +94,7 @@ async def send_generate_request(model: str, prompt: str) -> str:
     
     try:
         async with httpx.AsyncClient(timeout=timeout_duration) as client:
+            print("KLKLKLKKL")
             response = await client.post(
                 f"{settings.OLLAMA_API_URL}/api/generate",
                 json={
@@ -249,6 +250,7 @@ async def send_streaming_message(model: str, messages: List[Dict[str, str]]) -> 
     
     try:
         async with httpx.AsyncClient(timeout=timeout_duration) as client:
+            print("OPOPOPOP")
             response = await client.post(
                 f"{settings.OLLAMA_API_URL}/api/chat",
                 json={
@@ -505,6 +507,7 @@ async def is_model_available(model_name: str) -> bool:
         # (Иногда список моделей не обновляется мгновенно)
         if not model_exists:
             try:
+                print("TRTRTRTRTR")
                 async with httpx.AsyncClient(timeout=8.0) as client:
                     response = await client.post(
                         f"{settings.OLLAMA_API_URL}/api/generate",
@@ -534,6 +537,7 @@ async def query_ollama(prompt: str, model: str) -> str:
         logger.info(f"🔍 Querying Ollama with model {model}")
         
         async with httpx.AsyncClient(timeout=600) as client:
+            print("QQQQQQQQQQQQQQQQQQQQ")
             response = await client.post(
                 f"{settings.OLLAMA_API_URL}/api/generate",
                 json={
@@ -650,8 +654,9 @@ def trigger(data: dict) -> str:
 # НОВЫЙМАРШРУТ ДЛЯ АНАЛИЗА НА ГЛАВНОЙ СТРАНИЦЕ
 async def ollama_stream(prompt: str):
     async with httpx.AsyncClient(timeout=None) as client:
+        print("AGGAGAGAGAGAGAG")
         async with client.stream("POST", "http://localhost:11434/api/chat", json={
-            "model": "llama3.2:latest",  # ЗАМЕНИ НА НАЗВАНИЕ СВОЕЙ МОДЕЛИ КОТОРУЮ ТЫ НАЗВАЛ У СЕБЯ В OLLAMA
+            "model": "llama3.1:8b",  # ЗАМЕНИ НА НАЗВАНИЕ СВОЕЙ МОДЕЛИ КОТОРУЮ ТЫ НАЗВАЛ У СЕБЯ В OLLAMA
             "stream": True,
             "messages": [
                 {"role": "user", "content": prompt}

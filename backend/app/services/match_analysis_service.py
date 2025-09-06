@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, time, timedelta
 import re
 import os
 import httpx
@@ -15,6 +15,7 @@ from app.schemas.match_analysis import (
     PlayerCreate, MatchCreate
 )
 import logging
+from langchain.sport import search, load_data
 
 logger = logging.getLogger(__name__)
 
@@ -31,23 +32,23 @@ class MatchAnalysisService:
         self.trigger_methods = {
             "top_performers": self._analyze_top_performers,
             "losers_50_percent": self._analyze_losers_50_percent,
-            "endgame_problems": self._analyze_endgame_problems,
-            "lead_4_lost": self._analyze_lead_4_lost,
-            "balance_problems": self._analyze_balance_problems,
-            "led_2_sets_lost": self._analyze_led_2_sets_lost,
-            "led_1_set_lost": self._analyze_led_1_set_lost,
-            "early_final_exit": self._analyze_early_final_exit,
-            "league_promotion_failed": self._analyze_league_promotion_failed,
-            "won_2_lost_3rd": self._analyze_won_2_lost_3rd,
-            "close_score_losses": self._analyze_close_score_losses,
+            "endgame_problems": self._analyze_endgame_problems, #еще нет
+            "lead_4_lost": self._analyze_lead_4_lost, #еще нет
+            "balance_problems": self._analyze_balance_problems, #еще нет
+            # "led_2_sets_lost": self._analyze_led_2_sets_lost,
+            # "led_1_set_lost": self._analyze_led_1_set_lost,
+            "early_final_exit": self._analyze_early_final_exit, #еще нет
+            "league_promotion_failed": self._analyze_league_promotion_failed, #еще нет
+            "won_2_lost_3rd": self._analyze_won_2_lost_3rd, #еще нет
+            "close_score_losses": self._analyze_close_score_losses, #еще нет
             "post_holiday_problems": self._analyze_post_holiday_problems,
             "time_performance": self._analyze_time_performance,
-            "shutout_losses": self._analyze_shutout_losses,
+            "shutout_losses": self._analyze_shutout_losses, #еще нет
             "losing_streaks": self._analyze_losing_streaks,
-            "weaker_opponent_losses": self._analyze_weaker_opponent_losses,
-            "long_match_losses": self._analyze_long_match_losses,
-            "higher_league_struggles": self._analyze_higher_league_struggles,
-            "reception_problems": self._analyze_reception_problems,
+            "weaker_opponent_losses": self._analyze_weaker_opponent_losses, #еще нет
+            "long_match_losses": self._analyze_long_match_losses, #еще нет
+            "higher_league_struggles": self._analyze_higher_league_struggles, #еще нет
+            "reception_problems": self._analyze_reception_problems, #еще нет
             "defeat_0_3": self._analyze_defeat_0_3,
             "won_2_lost_3rd_set": self._analyze_won_2_lost_3rd_set,
             "early_final_exit_advanced": self._analyze_early_final_exit_advanced,
@@ -67,11 +68,11 @@ class MatchAnalysisService:
             errors = []
             file_player_ids = set()  # Отслеживаем ID игроков из этого файла
             
-            logger.info(f"🔄 Начинаем обработку {len(excel_data)} строк из Excel...")
+            print(f"🔄 Начинаем обработку {len(excel_data)} строк из Excel...")
             
             for idx, match_data in enumerate(excel_data):
                 try:
-                    logger.info(f"📝 Обрабатываем строку {idx + 1}: {match_data.игрок_1} vs {match_data.игрок_2}")
+                    print(f"📝 Обрабатываем строку {idx + 1}: {match_data.игрок_1} vs {match_data.игрок_2}")
                     
                     # Получаем или создаем игроков
                     # Обрабатываем игроков с рейтингами
@@ -96,23 +97,23 @@ class MatchAnalysisService:
                     match_date = self._parse_date(match_data.дата)
                     
                     # Проверяем, не существует ли уже такой матч
-                    if self._match_exists(match_date, player1.id, player2.id, match_data.счёт):
+                    if self._match_exists(match_date, player1.id, player2.id, match_data.счёт, match_data.время):
                         skipped_duplicates += 1
-                        logger.info(f"⏭️  Пропускаем дубликат: {match_data.игрок_1} vs {match_data.игрок_2} от {match_date} со счётом {match_data.счёт}")
+                        print(f"⏭️  Пропускаем дубликат: {match_data.игрок_1} vs {match_data.игрок_2} от {match_date} со счётом {match_data.счёт} со временем {match_data.время}")
                         continue
                     
                     # Создаем матч
                     match = await self._create_match_from_excel(match_data, player1, player2)
                     created_matches += 1
-                    logger.info(f"✅ Создан матч: {match_data.игрок_1} vs {match_data.игрок_2}")
+                    print(f"✅ Создан матч: {match_data.игрок_1} vs {match_data.игрок_2}")
                     
                 except Exception as e:
                     error_msg = f"Строка {idx + 1}: Ошибка при обработке матча {match_data.игрок_1} vs {match_data.игрок_2}: {str(e)}"
                     errors.append(error_msg)
-                    logger.error(f"❌ {error_msg}")
+                    print(f"❌ {error_msg}")
             # Сохраняем список игроков из этого файла (в рамках текущего объекта)
             self.last_uploaded_player_ids = list(file_player_ids)
-            logger.info(f"💾 Сохранен список из {len(file_player_ids)} игроков из загруженного файла")
+            print(f"💾 Сохранен список из {len(file_player_ids)} игроков из загруженного файла")
 
             result = {
                 "created_players": created_players,
@@ -124,17 +125,17 @@ class MatchAnalysisService:
                 "success": True
             }
 
-            logger.info(f"📊 Результат обработки:")
-            logger.info(f"  - Всего строк: {len(excel_data)}")
-            logger.info(f"  - Создано матчей: {created_matches}")
-            logger.info(f"  - Пропущено дубликатов: {skipped_duplicates}")
-            logger.info(f"  - Игроков в файле: {len(file_player_ids)}")
-            logger.info(f"  - Ошибок: {len(errors)}")
+            print(f"📊 Результат обработки:")
+            print(f"  - Всего строк: {len(excel_data)}")
+            print(f"  - Создано матчей: {created_matches}")
+            print(f"  - Пропущено дубликатов: {skipped_duplicates}")
+            print(f"  - Игроков в файле: {len(file_player_ids)}")
+            print(f"  - Ошибок: {len(errors)}")
 
             return result
             
         except Exception as e:
-            logger.error(f"💥 Ошибка при обработке Excel данных: {str(e)}")
+            print(f"💥 Ошибка при обработке Excel данных: {str(e)}")
             return {"success": False, "error": str(e)}
     
     async def _get_or_create_player(self, player_name: str, rating_str: Optional[str] = None) -> tuple[Player, bool]:
@@ -148,7 +149,7 @@ class MatchAnalysisService:
                 cleaned = rating_str.replace(',', '.').strip()
                 rating_float = float(cleaned)
                 rating = int(round(rating_float))  # Округляем до ближайшего
-                logger.info(f"📊 Рейтинг из поля: {rating_str} -> {rating}")
+                print(f"📊 Рейтинг из поля: {rating_str} -> {rating}")
             except (ValueError, AttributeError):
                 logger.warning(f"Не удалось извлечь рейтинг из поля рейтинга: {rating_str}")
         
@@ -160,7 +161,7 @@ class MatchAnalysisService:
                     rating_from_name = float(name_parts[1].strip())
                     rating = int(rating_from_name)  # Округляем до целого
                     player_name = name_parts[0].strip()  # Очищаем имя от рейтинга
-                    logger.info(f"📊 Рейтинг из имени: {rating_from_name} -> {rating} для игрока {player_name}")
+                    print(f"📊 Рейтинг из имени: {rating_from_name} -> {rating} для игрока {player_name}")
                 except ValueError:
                     logger.warning(f"Не удалось извлечь рейтинг из имени игрока: {player_name}")
 
@@ -191,7 +192,22 @@ class MatchAnalysisService:
         
         return player, False  # Игрок уже существовал
     
-    async def _create_match_from_excel(self, data: ExcelMatchData, player1: Player, player2: Player) -> Match:
+
+
+    def parse_time(self, value): #
+        if not value or str(value).strip() in ["", "nan", "NaT"]:
+            return None
+        if isinstance(value, time):  # уже time
+            return value
+        try:
+            return datetime.strptime(str(value), "%H:%M:%S").time()
+        except ValueError:
+            try:
+                return datetime.strptime(str(value), "%H:%M").time()
+            except ValueError:
+                return None
+        
+    async def _create_match_from_excel(self, data: ExcelMatchData, player1: Player, player2: Player) -> Match: #РАБОТАЕТ
         """Создает матч из данных Excel"""
         # Парсим дату - поддерживаем разные форматы
         match_date = self._parse_date(data.дата)
@@ -206,8 +222,11 @@ class MatchAnalysisService:
         if data.турнир:
             league = await self._get_or_create_league(data.турнир)
         
+        time1 = self.parse_time(data.время)
+        
         match = Match(
             date=match_date,
+            time=time1,
             player1_id=player1.id,
             player2_id=player2.id,
             winner_id=winner_id,
@@ -222,7 +241,7 @@ class MatchAnalysisService:
         )
         
         # Проверяем на дубликаты
-        if not self._match_exists(match_date, player1.id, player2.id, data.счёт):
+        if not self._match_exists(match_date, player1.id, player2.id, data.счёт, data.время):
             self.db.add(match)
             self.db.commit()
             self.db.refresh(match)
@@ -319,9 +338,10 @@ class MatchAnalysisService:
         
         self.db.commit()
     
-    async def analyze_triggers(self, request: AnalysisRequest) -> AnalysisResponse:
+    async def analyze_triggers(self, request: AnalysisRequest) -> AnalysisResponse: #РАБОТАЕТ
         """Выполняет анализ триггеров для игроков"""
         logger.info("🔍 Начинаем анализ триггеров...")
+        print("!!!!!!!!Что пришло в запросе:", request)
         
         # Красивый заголовок в консоли
         print("\n" + "="*100)
@@ -333,7 +353,7 @@ class MatchAnalysisService:
             end_date = request.period_end or date.today()
             start_date = request.period_start or (end_date - timedelta(days=90))  # По умолчанию 3 месяца
             
-            logger.info(f"📅 Период анализа: {start_date} - {end_date}")
+            print(f"📅 Период анализа: {start_date} - {end_date}")
             
             # Очищаем старые триггеры для этого периода
             deleted_count = self.db.query(PlayerTrigger).filter(
@@ -342,29 +362,29 @@ class MatchAnalysisService:
                     PlayerTrigger.period_end == end_date
                 )
             ).delete()
-            logger.info(f"🧹 Удалено старых триггеров: {deleted_count}")
+            print(f"🧹 Удалено старых триггеров: {deleted_count}")
             
             # Получаем игроков для анализа
             query = self.db.query(Player)
             # ПРИОРИТЕТ: явно переданные player_ids из запроса (фронт отправляет file_player_ids после загрузки)
             if request.player_ids:
                 query = query.filter(Player.id.in_(request.player_ids))
-                logger.info(f"👥 Анализируем указанных игроков: {len(request.player_ids)} (переданы в запросе)")
+                print(f"👥 Анализируем указанных игроков: {len(request.player_ids)} (переданы в запросе)")
             elif request.analyze_recent_upload_only and self.last_uploaded_player_ids:
                 query = query.filter(Player.id.in_(self.last_uploaded_player_ids))
-                logger.info(f"👥 Анализ игроков только из последней загрузки (в пределах жизненного цикла сервиса): {len(self.last_uploaded_player_ids)}")
+                print(f"👥 Анализ игроков только из последней загрузки (в пределах жизненного цикла сервиса): {len(self.last_uploaded_player_ids)}")
             elif request.analyze_recent_upload_only:
-                logger.warning("⚠️  analyze_recent_upload_only=true, но список self.last_uploaded_player_ids пуст. Передайте player_ids в запросе.")
+                print("⚠️  analyze_recent_upload_only=true, но список self.last_uploaded_player_ids пуст. Передайте player_ids в запросе.")
             else:
                 # Анализируем указанных игроков
                 # Анализируем всех игроков из БД (старое поведение)
                 logger.info(f"👥 Анализируем всех игроков из базы данных")
             
             players = query.all()
-            logger.info(f"👥 Найдено игроков для анализа: {len(players)}")
+            print(f"👥 Найдено игроков для анализа: {len(players)}")
             
             if not players:
-                logger.warning("⚠️  Не найдено игроков для анализа!")
+                print("⚠️  Не найдено игроков для анализа!")
                 return AnalysisResponse(
                     period_start=start_date,
                     period_end=end_date,
@@ -380,14 +400,14 @@ class MatchAnalysisService:
             
             # Запускаем анализ по каждому типу триггера
             trigger_types = request.trigger_types or list(self.trigger_methods.keys())
-            logger.info(f"🎯 Типы триггеров для анализа: {trigger_types}")
+            print(f"🎯 Типы триггеров для анализа: {trigger_types}")
             
             for trigger_type in trigger_types:
                 if trigger_type in self.trigger_methods:
-                    logger.info(f"🔬 Анализируем триггер: {trigger_type}")
+                    print(f"🔬 Анализируем триггер: {trigger_type}")
                     method = self.trigger_methods[trigger_type]
                     triggers = await method(players, start_date, end_date)
-                    logger.info(f"✅ Найдено триггеров типа {trigger_type}: {len(triggers)}")
+                    print(f"✅ Найдено триггеров типа {trigger_type}: {len(triggers)}")
                     
                     # Выводим детальную информацию о каждом найденном триггере
                     for i, trigger in enumerate(triggers, 1):
@@ -695,7 +715,7 @@ class MatchAnalysisService:
         return result
     
     # Методы для анализа конкретных триггеров
-    async def _analyze_top_performers(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
+    async def _analyze_top_performers(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]: #РАБОТАЕТ
         """Анализ топ игроков по результативности"""
         triggers = []
         
@@ -851,17 +871,20 @@ class MatchAnalysisService:
         self.db.commit()
         return triggers
     
-    async def _analyze_post_holiday_problems(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
+    async def _analyze_post_holiday_problems(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]: #РАБОТАЕТ
         """Анализ проблем после праздников"""
         triggers = []
         
         # Получаем праздники в периоде
         holidays = self.db.query(Holiday).filter(
-            and_(
-                Holiday.start_date >= start_date - timedelta(days=30),
-                Holiday.end_date <= end_date + timedelta(days=10)
-            )
+        or_(
+            and_(Holiday.start_date >= start_date - timedelta(days=30),
+                Holiday.start_date <= end_date),
+            and_(Holiday.end_date >= start_date,
+                Holiday.end_date <= end_date + timedelta(days=10))
+        )
         ).all()
+
         
         for player in players:
             poor_performance_after_holidays = 0
@@ -872,20 +895,22 @@ class MatchAnalysisService:
                 post_holiday_start = holiday.end_date + timedelta(days=1)
                 post_holiday_end = holiday.end_date + timedelta(days=7)
                 
-                post_holiday_matches = self.db.query(Match).filter(
+                post_holiday_matches = list({
+                m.id: m for m in self.db.query(Match).filter(
                     and_(
                         Match.date >= post_holiday_start,
                         Match.date <= post_holiday_end,
                         or_(Match.player1_id == player.id, Match.player2_id == player.id)
                     )
                 ).all()
+                }.values())
                 
                 if post_holiday_matches:
                     total_post_holiday_matches += len(post_holiday_matches)
                     losses = len([m for m in post_holiday_matches if m.winner_id and m.winner_id != player.id])
                     
                     # Считаем плохой результат если больше 60% поражений
-                    if losses / len(post_holiday_matches) > 0.6:
+                    if losses / len(post_holiday_matches) >= 0.6:
                         poor_performance_after_holidays += 1
             
             # Триггер если плохие результаты после 2+ праздников
@@ -912,7 +937,7 @@ class MatchAnalysisService:
         self.db.commit()
         return triggers
     
-    async def _analyze_time_performance(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
+    async def _analyze_time_performance(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]: #РАБОТАЕТ
         """Анализ результативности по времени суток"""
         triggers = []
         
@@ -1015,21 +1040,21 @@ class MatchAnalysisService:
         triggers = []
         return triggers
     
-    async def _analyze_post_holiday_problems(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
-        triggers = []
-        return triggers
+    # async def _analyze_post_holiday_problems(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
+    #     triggers = []
+    #     return triggers
     
-    async def _analyze_time_performance(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
-        triggers = []
-        return triggers
+    # async def _analyze_time_performance(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
+    #     triggers = []
+    #     return triggers
     
     async def _analyze_shutout_losses(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
         triggers = []
         return triggers
     
-    async def _analyze_losing_streaks(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
-        triggers = []
-        return triggers
+    # async def _analyze_losing_streaks(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
+    #     triggers = []
+    #     return triggers
     
     async def _analyze_weaker_opponent_losses(self, players: List[Player], start_date: date, end_date: date) -> List[PlayerTrigger]:
         triggers = []
@@ -1109,21 +1134,19 @@ class MatchAnalysisService:
         
         raise ValueError(f"Не удалось распарсить счёт: {score_str}")
     
-    def _match_exists(self, date: date, player1_id: str, player2_id: str, score: str) -> bool:
-        """Проверяет, существует ли уже такой матч в базе данных"""
-        # Проверяем точное совпадение: дата, игроки, счет
+    def _match_exists(self, date: date, player1_id: str, player2_id: str, score: str, time: str) -> bool:
         existing_match = self.db.query(Match).filter(
             and_(
                 Match.date == date,
+                Match.score == score,
+                Match.time == time,
                 or_(
-                    # Прямой порядок игроков
                     and_(Match.player1_id == player1_id, Match.player2_id == player2_id),
-                    # Обратный порядок игроков
                     and_(Match.player1_id == player2_id, Match.player2_id == player1_id)
                 )
             )
         ).first()
-        
+
         return existing_match is not None
 
     # ========== НОВЫЕ ТРИГГЕРЫ ==========
@@ -1865,11 +1888,12 @@ class MatchAnalysisService:
             
             # Вызываем функцию стриминга из ollama_service
             async with httpx.AsyncClient(timeout=30.0) as client:
+                print("AHAHAHHAHAHAHAHA")
                 async with client.stream("POST", "http://localhost:11434/api/chat", json={
-                    "model": "llama3.2:latest",  # ← ИЗМЕНИТЕ НА ВАШУ МОДЕЛЬ
+                    "model": "llama3.1:8b",  # ← ИЗМЕНИТЕ НА ВАШУ МОДЕЛЬ
                     "stream": True,
                     "messages": [
-                        {"role": "system", "content": "тут пиши."},
+                        {"role": "system", "content": "Ты аналитик по настольному теннису."},
                         {"role": "user", "content": prompt}
                     ]
                 }) as response:
@@ -1887,12 +1911,13 @@ class MatchAnalysisService:
                     return analysis_text if analysis_text.strip() else f"Анализ триггера {trigger_type} для игрока {player_name}"
                     
         except Exception as e:
-            logger.error(f"Ошибка генерации ИИ-анализа: {e}")
+            print(f"Ошибка генерации ИИ-анализа: {e}")
             return f"Не удалось сгенерировать анализ для триггера {trigger_type}"
     
     def _create_analysis_prompt(self, trigger_type: str, player_name: str, trigger_value: str, player_stats: Dict) -> str:
         """Создает промпт для ИИ-анализа"""
-        
+        embeddings, metadata = load_data()
+        dop_infa = search(trigger_value, embeddings, metadata, top_k=3)
         # Описания триггеров
         trigger_descriptions = {
             "top_performers": "отличные результаты",
@@ -1925,101 +1950,103 @@ class MatchAnalysisService:
 - Последняя форма: {recent_form}
 - Детали триггера: {trigger_value}
 
-Дай профессиональный анализ этой проблемы в 2-3 предложениях. Объясни возможные причины .
+Дай профессиональный анализ этой проблемы в 2-3 предложениях. Объясни возможные причины. Вот допольнительная информация про триггер: {[item["text"] for item in dop_infa]}
 """
+        print("Промпты которые летят в олламу 🏃🏃🏃🏃🏃🏃🏃", prompt)
         
         return prompt
 
-    async def _generate_player_comprehensive_analysis(self, player_name: str, player_triggers: List[PlayerTrigger], player_stats: Dict) -> str:
-        """Генерирует комплексный ИИ-анализ для всех триггеров игрока"""
-        if not self._ai_analysis_enabled:
-            return f"Комплексный анализ игрока {player_name}"
+    # async def _generate_player_comprehensive_analysis(self, player_name: str, player_triggers: List[PlayerTrigger], player_stats: Dict) -> str:
+    #     """Генерирует комплексный ИИ-анализ для всех триггеров игрока"""
+    #     if not self._ai_analysis_enabled:
+    #         return f"Комплексный анализ игрока {player_name}"
         
-        try:
-            # Создаем промпт для комплексного анализа
-            prompt = self._create_comprehensive_analysis_prompt(player_name, player_triggers, player_stats)
+    #     try:
+    #         # Создаем промпт для комплексного анализа
+    #         prompt = self._create_comprehensive_analysis_prompt(player_name, player_triggers, player_stats)
             
-            # Вызываем функцию стриминга из ollama_service
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                async with client.stream("POST", "http://localhost:11434/api/chat", json={
-                    "model": "llama3.2:latest",
-                    "stream": True,
-                    "messages": [
-                        {"role": "system", "content": "Ты аналитик по выявлению мошенничества в спорте. Твоя задача - анализировать подозрительные паттерны в игре спортсменов и выявлять признаки договорных матчей или намеренного проигрыша."},
-                        {"role": "user", "content": prompt}
-                    ]
-                }) as response:
-                    analysis_text = ""
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            data = json.loads(line)
-                            if "message" in data and "content" in data["message"]:
-                                analysis_text += data["message"]["content"]
-                        except json.JSONDecodeError:
-                            continue
+    #         # Вызываем функцию стриминга из ollama_service
+    #         async with httpx.AsyncClient(timeout=30.0) as client:
+    #             print("FDFDFDFDFDFDFD")
+    #             async with client.stream("POST", "http://localhost:11434/api/chat", json={
+    #                 "model": "llama3.1:8b",
+    #                 "stream": True,
+    #                 "messages": [
+    #                     {"role": "system", "content": "Ты аналитик по выявлению мошенничества в спорте. Твоя задача - анализировать подозрительные паттерны в игре спортсменов и выявлять признаки договорных матчей или намеренного проигрыша."},
+    #                     {"role": "user", "content": prompt}
+    #                 ]
+    #             }) as response:
+    #                 analysis_text = ""
+    #                 async for line in response.aiter_lines():
+    #                     if not line.strip():
+    #                         continue
+    #                     try:
+    #                         data = json.loads(line)
+    #                         if "message" in data and "content" in data["message"]:
+    #                             analysis_text += data["message"]["content"]
+    #                     except json.JSONDecodeError:
+    #                         continue
                     
-                    return analysis_text if analysis_text.strip() else f"Комплексный анализ игрока {player_name}"
+    #                 return analysis_text if analysis_text.strip() else f"Комплексный анализ игрока {player_name}"
                     
-        except Exception as e:
-            logger.error(f"Ошибка генерации комплексного ИИ-анализа: {e}")
-            return f"Не удалось сгенерировать комплексный анализ для игрока {player_name}"
+        # except Exception as e:
+        #     logger.error(f"Ошибка генерации комплексного ИИ-анализа: {e}")
+        #     return f"Не удалось сгенерировать комплексный анализ для игрока {player_name}"
 
-    def _create_comprehensive_analysis_prompt(self, player_name: str, player_triggers: List[PlayerTrigger], player_stats: Dict) -> str:
-        """Создает промпт для комплексного ИИ-анализа всех триггеров игрока"""
+#     def _create_comprehensive_analysis_prompt(self, player_name: str, player_triggers: List[PlayerTrigger], player_stats: Dict) -> str:
+#         """Создает промпт для комплексного ИИ-анализа всех триггеров игрока"""
         
-        # Описания триггеров с точки зрения мошенничества
-        trigger_descriptions = {
-            "top_performers": "стабильно высокие результаты",
-            "defeat_0_3": "подозрительно частые разгромные поражения",
-            "won_2_lost_3rd_set": "намеренные проигрыши после лидерства 2:0",
-            "early_final_exit_advanced": "подозрительные досрочные сдачи в финалах",
-            "led_1_set_lost_match": "потеря преимущества в ключевые моменты",
-            "led_2_sets_lost_match": "крайне подозрительные развороты после лидерства 2:0",
-            "psychological_breakdown": "неестественные психологические срывы",
-            "comeback_inability": "подозрительная неспособность к возвращению в игру",
-            "pressure_situations": "провалы в важных матчах",
-            "losers_50_percent": "аномально низкий процент побед"
-        }
+#         # Описания триггеров с точки зрения мошенничества
+#         trigger_descriptions = {
+#             "top_performers": "стабильно высокие результаты",
+#             "defeat_0_3": "подозрительно частые разгромные поражения",
+#             "won_2_lost_3rd_set": "намеренные проигрыши после лидерства 2:0",
+#             "early_final_exit_advanced": "подозрительные досрочные сдачи в финалах",
+#             "led_1_set_lost_match": "потеря преимущества в ключевые моменты",
+#             "led_2_sets_lost_match": "крайне подозрительные развороты после лидерства 2:0",
+#             "psychological_breakdown": "неестественные психологические срывы",
+#             "comeback_inability": "подозрительная неспособность к возвращению в игру",
+#             "pressure_situations": "провалы в важных матчах",
+#             "losers_50_percent": "аномально низкий процент побед"
+#         }
         
-        wins = player_stats.get('wins', 0)
-        losses = player_stats.get('losses', 0)
-        win_rate = player_stats.get('win_rate', 0)
-        matches = player_stats.get('matches_played', 0)
-        recent_form = player_stats.get('recent_form', '')
-        sets_won = player_stats.get('sets_won', 0)
-        sets_lost = player_stats.get('sets_lost', 0)
+#         wins = player_stats.get('wins', 0)
+#         losses = player_stats.get('losses', 0)
+#         win_rate = player_stats.get('win_rate', 0)
+#         matches = player_stats.get('matches_played', 0)
+#         recent_form = player_stats.get('recent_form', '')
+#         sets_won = player_stats.get('sets_won', 0)
+#         sets_lost = player_stats.get('sets_lost', 0)
         
-        # Формируем список проблем
-        problems_list = []
-        positive_aspects = []
+#         # Формируем список проблем
+#         problems_list = []
+#         positive_aspects = []
         
-        for trigger in player_triggers:
-            description = trigger_descriptions.get(trigger.trigger_type, trigger.trigger_type)
-            if trigger.trigger_type == 'top_performers':
-                positive_aspects.append(f"- {description}: {trigger.trigger_value}")
-            else:
-                problems_list.append(f"- {description}: {trigger.trigger_value}")
+#         for trigger in player_triggers:
+#             description = trigger_descriptions.get(trigger.trigger_type, trigger.trigger_type)
+#             if trigger.trigger_type == 'top_performers':
+#                 positive_aspects.append(f"- {description}: {trigger.trigger_value}")
+#             else:
+#                 problems_list.append(f"- {description}: {trigger.trigger_value}")
         
-        problems_text = "\n".join(problems_list) if problems_list else "Серьезных проблем не выявлено"
-        positives_text = "\n".join(positive_aspects) if positive_aspects else ""
+#         problems_text = "\n".join(problems_list) if problems_list else "Серьезных проблем не выявлено"
+#         positives_text = "\n".join(positive_aspects) if positive_aspects else ""
         
-        prompt = f"""
-АНАЛИЗ ПОДОЗРИТЕЛЬНОГО ПОВЕДЕНИЯ ИГРОКА: {player_name}
+#         prompt = f"""
+# АНАЛИЗ ПОДОЗРИТЕЛЬНОГО ПОВЕДЕНИЯ ИГРОКА: {player_name}
 
-СТАТИСТИКА ЗА ПЕРИОД:
-- Матчей сыграно: {matches}
-- Побед: {wins} ({win_rate:.1f}%)
-- Поражений: {losses}
-- Соотношение сетов: {sets_won}:{sets_lost}
-- Последняя форма: {recent_form}
+# СТАТИСТИКА ЗА ПЕРИОД:
+# - Матчей сыграно: {matches}
+# - Побед: {wins} ({win_rate:.1f}%)
+# - Поражений: {losses}
+# - Соотношение сетов: {sets_won}:{sets_lost}
+# - Последняя форма: {recent_form}
 
-ВЫЯВЛЕННЫЕ ПОДОЗРИТЕЛЬНЫЕ ПАТТЕРНЫ:
-{problems_text}
+# ВЫЯВЛЕННЫЕ ПОДОЗРИТЕЛЬНЫЕ ПАТТЕРНЫ:
+# {problems_text}
 
-ПОЛОЖИТЕЛЬНЫЕ ПОКАЗАТЕЛИ:
-{positives_text}
+# ПОЛОЖИТЕЛЬНЫЕ ПОКАЗАТЕЛИ:
+# {positives_text}
 
-Проанализируй этого игрока на предмет возможного мошенничества или договорных матчей. Укажи уровень подозрительности (низкий/средний/высокий) и объясни, какие паттерны могут указывать на намеренные проигрыши или подставную игру. Дай оценку в 3-4 предложениях.
-"""
+# Проанализируй этого игрока на предмет возможного мошенничества или договорных матчей. Укажи уровень подозрительности (низкий/средний/высокий) и объясни, какие паттерны могут указывать на намеренные проигрыши или подставную игру. Дай оценку в 3-4 предложениях.
+# """
