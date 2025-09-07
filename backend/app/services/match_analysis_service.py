@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 from datetime import datetime, date, time, timedelta
 import re
 import os
@@ -16,6 +16,7 @@ from app.schemas.match_analysis import (
 )
 import logging
 from langchain.sport import search, load_data
+from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class MatchAnalysisService:
         self._ai_analysis_enabled = True  # Флаг для включения/выключения ИИ
 
         self.trigger_methods = {
-            "top_performers": self._analyze_top_performers,
+            "top_performers": self._analyze_top_performers, 
             "losers_50_percent": self._analyze_losers_50_percent,
             "endgame_problems": self._analyze_endgame_problems, #еще нет
             "lead_4_lost": self._analyze_lead_4_lost, #еще нет
@@ -206,47 +207,176 @@ class MatchAnalysisService:
                 return datetime.strptime(str(value), "%H:%M").time()
             except ValueError:
                 return None
-        
-    async def _create_match_from_excel(self, data: ExcelMatchData, player1: Player, player2: Player) -> Match: #РАБОТАЕТ
-        """Создает матч из данных Excel"""
-        # Парсим дату - поддерживаем разные форматы
+
+
+
+    async def _create_match_from_excel(self, data: ExcelMatchData, player1: Player, player2: Player) -> Match:
+        """
+        Создает матч из данных Excel и, при наличии, сохраняет построчно результаты сетов в MatchSet.
+        Ожидаемый формат data.счёт:
+        - "2:3"                  -> только общий счёт
+        - "2:3 (4-11 11-6 ...)"  -> общий счёт + результаты по сетам в скобках
+        Функция корректно обрабатывает разные разделители и пробелы/запятые.
+        """
+
+        # 1) Парсим дату и время
         match_date = self._parse_date(data.дата)
-        
-        # Определяем победителя по счету
-        sets_player1, sets_player2 = self._parse_score(data.счёт)
-        
-        winner_id = player1.id if sets_player1 > sets_player2 else player2.id
-        
-        # Получаем или создаем лигу
+        # попытка использовать метод parse_time, если есть
+        time_parser = getattr(self, "parse_time", None)
+        if callable(time_parser):
+            match_time = time_parser(data.время)
+        else:
+            # если метода нет — попытка простого парсинга
+            try:
+                from datetime import datetime
+                match_time = datetime.strptime(str(data.время), "%H:%M:%S").time() if data.время else None
+            except Exception:
+                match_time = None
+
+        raw_score = str(data.счёт).strip() if data.счёт is not None else ""
+
+        # 2) Регекс: извлечь общий счёт (например 2:3 или 2-3) и содержимое скобок (пересчёт сетов)
+        # Поддерживаем формат: "2:3 (4-11 11-6)" или "2-3(4-11,11-6)" и т.п.
+        m = re.match(r'^\s*([0-9]+[\:\-][0-9]+)\s*(?:\((.*)\))?\s*$', raw_score)
+        overall_part = None
+        sets_part = None
+        if m:
+            overall_part = m.group(1)
+            sets_part = m.group(2)  # может быть None
+        else:
+            # если не подошёл шаблон — попробуем взять целиком как общий счёт
+            overall_part = raw_score
+            sets_part = None
+
+        # Утилита — парсит пару "X:Y" или "X-Y" в ints
+        def parse_pair(s):
+            s = s.strip()
+            sep = ':' if ':' in s else '-'
+            left, right = s.split(sep)
+            return int(left), int(right)
+
+        # 3) Парсим детальные сеты из sets_part, если есть
+        per_set_scores = []  # list of (p1_points, p2_points)
+        if sets_part:
+            # находим все вхождения "число[-–—]число" в скобочной части
+            found = re.findall(r'(\d+\s*[-–—]\s*\d+)', sets_part)
+            for token in found:
+                # убираем пробелы вокруг дефиса и сплитим по любому типа дефиса
+                token_clean = token.strip()
+                parts = re.split(r'[-–—]', token_clean)
+                try:
+                    p1 = int(parts[0].strip())
+                    p2 = int(parts[1].strip())
+                    per_set_scores.append((p1, p2))
+                except Exception:
+                    # если парсинг конкретного сета не удался — пропускаем его
+                    continue
+
+        # 4) Если есть per_set_scores — подсчитываем sets_player1/sets_player2 по ним.
+        sets_player1 = None
+        sets_player2 = None
+        if per_set_scores:
+            sets_player1 = sum(1 for p1, p2 in per_set_scores if p1 > p2)
+            sets_player2 = sum(1 for p1, p2 in per_set_scores if p2 > p1)
+
+        # 5) Если per_set_scores отсутствуют или не дали корректный результат — используем общий результат
+        if sets_player1 is None or sets_player2 is None:
+            try:
+                a, b = parse_pair(overall_part)
+                sets_player1, sets_player2 = a, b
+            except Exception:
+                # не удалось распарсить общий результат — ставим 0:0 и логируем
+                sets_player1, sets_player2 = 0, 0
+                print(f"⚠️ Не удалось распарсить общий счёт '{raw_score}' для строки Excel.")
+
+        # 6) Определяем победителя (если есть явный)
+        if sets_player1 > sets_player2:
+            winner_id = player1.id
+        elif sets_player2 > sets_player1:
+            winner_id = player2.id
+        else:
+            winner_id = None  # ничья/ошибка — оставим None
+
+        # 7) Получаем/создаём лигу (как было)
         league = None
         if data.турнир:
             league = await self._get_or_create_league(data.турнир)
-        
-        time1 = self.parse_time(data.время)
-        
+
+        # 8) Создаём объект Match
         match = Match(
             date=match_date,
-            time=time1,
+            time=match_time,
             player1_id=player1.id,
             player2_id=player2.id,
             winner_id=winner_id,
-            score=data.счёт,
+            score=raw_score,
             sets_player1=sets_player1,
             sets_player2=sets_player2,
-            stage=data.стадия,
+            stage=(data.стадия if data.стадия else None),
             league_id=league.id if league else None,
             match_sl_id=int(data.sl_id) if data.sl_id else None,
-            is_final=data.стадия and "финал" in data.стадия.lower(),
-            is_semifinal=data.стадия and "полуфинал" in data.стадия.lower()
+            is_final=(bool(data.стадия) and "финал" in str(data.стадия).lower()),
+            is_semifinal=(bool(data.стадия) and "полуфинал" in str(data.стадия).lower())
         )
-        
-        # Проверяем на дубликаты
-        if not self._match_exists(match_date, player1.id, player2.id, data.счёт, data.время):
-            self.db.add(match)
-            self.db.commit()
-            self.db.refresh(match)
-        
+
+        # 9) Проверяем дубликат и сохраняем матч + сеты в транзакции
+        try:
+            # используем _match_exists как у тебя в коде (передавая те же параметры)
+            if not self._match_exists(match_date, player1.id, player2.id, raw_score, data.время):
+                self.db.add(match)
+                # сначала flush, чтобы получить match.id (если используется автогенерация)
+                try:
+                    self.db.flush()
+                except Exception:
+                    # если flush не доступен в сессии - сделаем commit+refresh как запасной вариант
+                    self.db.commit()
+                    self.db.refresh(match)
+
+                # если per_set_scores есть — сохраняем их в MatchSet
+                if per_set_scores:
+                    for i, (p1_pts, p2_pts) in enumerate(per_set_scores, start=1):
+                        # кто победил в сете
+                        if p1_pts > p2_pts:
+                            set_winner = player1.id
+                        elif p2_pts > p1_pts:
+                            set_winner = player2.id
+                        else:
+                            set_winner = None
+
+                        match_set = MatchSet(
+                            match_id=match.id,
+                            set_number=i,
+                            player1_points=p1_pts,
+                            player2_points=p2_pts,
+                            winner_id=set_winner
+                        )
+                        self.db.add(match_set)
+
+                # Финальный коммит
+                self.db.commit()
+                # Обновляем объект match из БД
+                self.db.refresh(match)
+            else:
+                # дубликат — просто вернём существующий матч (если хочется, можно его загрузить)
+                existing = self.db.query(Match).filter(
+                    Match.date == match_date,
+                    ((Match.player1_id == player1.id) & (Match.player2_id == player2.id)) | ((Match.player1_id == player2.id) & (Match.player2_id == player1.id)),
+                    Match.score == raw_score
+                ).first()
+                if existing:
+                    match = existing
+
+        except SQLAlchemyError as e:
+            # откатим транзакцию и вернём/запишем лог
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+            print(f"❌ Ошибка при сохранении матча/сетов: {e}")
+            raise
+
         return match
+
     
     async def _get_or_create_league(self, league_name: str) -> League:
         """Получает существующую лигу или создает новую"""
@@ -338,7 +468,7 @@ class MatchAnalysisService:
         
         self.db.commit()
     
-    async def analyze_triggers(self, request: AnalysisRequest) -> AnalysisResponse:
+    async def analyze_triggers(self, request: AnalysisRequest) -> AnalysisResponse:  #Работает
             """Выполняет анализ триггеров для игроков (новая версия, игрок-ориентированная)"""
             logger.info("🔍 Начинаем анализ триггеров...")
 
@@ -757,35 +887,47 @@ class MatchAnalysisService:
         self.db.commit()
         return triggers
     
-    async def _analyze_losing_streaks(self, player: Player, matches: List[Match], start_date: date, end_date: date) -> List[PlayerTrigger]:
-        """Анализ серий поражений"""
+    async def _analyze_losing_streaks(
+    self, player: Player, matches: List[Match], start_date: date, end_date: date
+) -> List[PlayerTrigger]:
+        """Анализ серий поражений игрока с учётом последних матчей"""
         triggers = []
 
-            
-            # Ищем текущую серию поражений
-        current_streak = 0
+        if not matches:
+            return triggers
+
+        # Сортируем матчи по дате, чтобы идти от старых к новым
+        matches_sorted = sorted(matches, key=lambda m: m.date)
+
         max_streak = 0
         temp_streak = 0
-            
-        for match in matches:
+
+        # Проходим по всем матчам, считаем максимальную серию поражений
+        for match in matches_sorted:
             if match.winner_id and match.winner_id != player.id:
                 temp_streak += 1
-                if matches.index(match) < 5:  # Последние 5 матчей
-                    current_streak += 1
             else:
                 max_streak = max(max_streak, temp_streak)
                 temp_streak = 0
-            
+        # Проверяем последнюю серию
         max_streak = max(max_streak, temp_streak)
-            
-        # Триггер при серии из 3+ поражений подряд
+
+        # Считаем текущую серию поражений только по последним 5 матчам
+        last_matches = matches_sorted[-5:]  # берём последние 5 матчей
+        current_streak = 0
+        for match in last_matches:
+            if match.winner_id and match.winner_id != player.id:
+                current_streak += 1
+            else:
+                break  # текущая серия прервалась
+
+        # Создаём триггер при условиях
         if current_streak >= 3 or max_streak >= 4:
             severity = 3 if current_streak >= 5 or max_streak >= 6 else 2
-                
             trigger_value = f"Серия поражений: {current_streak} текущих"
             if max_streak > current_streak:
                 trigger_value += f", максимум {max_streak} за период"
-                
+
             trigger = PlayerTrigger(
                 player_id=player.id,
                 trigger_type="losing_streaks",
@@ -801,56 +943,133 @@ class MatchAnalysisService:
                 "total_matches": len(matches),
                 "recommendation": "Требуется анализ техники и психологической подготовки"
             })
-                
+
             self.db.add(trigger)
             triggers.append(trigger)
-        
+
         self.db.commit()
         return triggers
-    
-    async def _analyze_post_holiday_problems(
-        self, player: Player, matches: List[Match], start_date: date, end_date: date
-    ) -> List[PlayerTrigger]:
-        """Анализ проблем игрока после праздников"""
-        triggers = []
 
-        # Получаем праздники в периоде
+    
+    async def _analyze_post_holiday_problems(   #РАБОТАЕТ
+    self,
+    player: Player,
+    matches: List[Match],
+    start_date: date,
+    end_date: date,
+    post_holiday_window_days: int = 14,   # <-- решает проблему 3 (расширяем окно)
+    min_matches_per_holiday: int = 2,      # минимум матчей в окне, чтобы учитывать праздник
+    poor_loss_rate_threshold: float = 0.6, # 60%
+    unexpected_loss_rate_threshold: float = 0.4, # если много "неожиданных" поражений
+    unexpected_rating_delta: int = 50      # если соперник слабее на >=50 => "ожидаемо выиграть"
+) -> List[PlayerTrigger]:
+        """
+        Анализ проблем после праздников с:
+        - корректным подбором holidays (пересечение интервалов),
+        - настраиваемым пост-праздничным окном (по умолчанию 14 дней),
+        - учётом силы соперника (отмечаем 'неожиданные' поражения против слабее рейтингов).
+        """
+
+        triggers: List[PlayerTrigger] = []
+
+        # 1) Выбираем праздники, которые **пересекают** расширенный период анализа
         holidays = self.db.query(Holiday).filter(
-            or_(
-                and_(
-                    Holiday.start_date >= start_date - timedelta(days=30),
-                    Holiday.start_date <= end_date
-                ),
-                and_(
-                    Holiday.end_date >= start_date,
-                    Holiday.end_date <= end_date + timedelta(days=10)
-                )
+            and_(
+                Holiday.end_date >= start_date - timedelta(days=30),
+                Holiday.start_date <= end_date + timedelta(days=10)
             )
         ).all()
 
+        if not holidays:
+            return triggers
+
+        # 2) Для быстродействия — подготовим словарь рейтингов соперников из всех матчей (кеш)
+        opponent_ids: Set[str] = set()
+        for m in matches:
+            if m.player1_id == player.id:
+                opponent_ids.add(m.player2_id)
+            elif m.player2_id == player.id:
+                opponent_ids.add(m.player1_id)
+        if opponent_ids:
+            rows = self.db.query(Player.id, Player.current_rating).filter(Player.id.in_(list(opponent_ids))).all()
+            rating_by_id: Dict[str, int] = {r[0]: (r[1] or 1000) for r in rows}  # default 1000 если нет
+        else:
+            rating_by_id = {}
+
         poor_performance_after_holidays = 0
         total_post_holiday_matches = 0
+        seen_match_ids: Set[str] = set()  # чтобы матч не учитывался дважды при перекрытии окон
+
+        player_rating = getattr(player, "current_rating", 1000) or 1000
 
         for holiday in holidays:
-            # Период 7 дней после праздника
-            post_holiday_start = holiday.end_date + timedelta(days=1)
-            post_holiday_end = holiday.end_date + timedelta(days=7)
+            post_start = holiday.end_date + timedelta(days=1)
+            post_end = holiday.end_date + timedelta(days=post_holiday_window_days)
 
-            # Фильтруем матчи игрока по пост-праздничному периоду
+            # обрезаем окно в границах анализа
+            window_start = max(post_start, start_date)
+            window_end = min(post_end, end_date)
+            if window_start > window_end:
+                continue
+
+            # берем матчи из переданного списка, которые попадают в окно и ещё не посчитаны
             post_holiday_matches = [
                 m for m in matches
-                if post_holiday_start <= m.date <= post_holiday_end
+                if (m.id not in seen_match_ids) and (window_start <= m.date <= window_end)
             ]
 
-            if post_holiday_matches:
-                total_post_holiday_matches += len(post_holiday_matches)
-                losses = len([m for m in post_holiday_matches if m.winner_id and m.winner_id != player.id])
+            if not post_holiday_matches:
+                continue
 
-                # Считаем плохой результат, если более 60% поражений
-                if losses / len(post_holiday_matches) >= 0.6:
-                    poor_performance_after_holidays += 1
+            # добавляем их в seen, чтобы не счётались повторно
+            for m in post_holiday_matches:
+                seen_match_ids.add(m.id)
 
-        # Триггер при плохих результатах после 2+ праздников
+            # требуем минимум матчей в окне, иначе шум
+            if len(post_holiday_matches) < min_matches_per_holiday:
+                continue
+
+            total_post_holiday_matches += len(post_holiday_matches)
+
+            # подсчёт: обычные поражения и "неожиданные" поражения (против слабого соперника)
+            losses = 0
+            unexpected_losses = 0
+
+            for m in post_holiday_matches:
+                # считаем проигрыш если winner_id != player.id
+                if m.winner_id != player.id:
+                    losses += 1
+
+                    # определяем соперника и его рейтинг
+                    if m.player1_id == player.id:
+                        opp_id = m.player2_id
+                    else:
+                        opp_id = m.player1_id
+                    opp_rating = rating_by_id.get(opp_id, 1000)
+
+                    # Если соперник существенно слабее => "неожиданный" проигрыш
+                    # Рассчёт ожидаемой вероятности победы игрока против соперника
+                    expected_win_prob = 1 / (1 + 10 ** ((opp_rating - player_rating) / 400))
+
+                    # Если шанс победы был высоким (> 0.7), но игрок всё же проиграл => неожиданный проигрыш
+                    if expected_win_prob >= 0.7:
+                        unexpected_losses += 1
+
+                    else:
+                        # можно также использовать ожидаемую вероятность (ELO) — пример ниже (закомментирован)
+                        pass
+
+            # считаем доли
+            loss_rate = losses / len(post_holiday_matches) if post_holiday_matches else 0.0
+            unexpected_loss_rate = unexpected_losses / len(post_holiday_matches) if post_holiday_matches else 0.0
+
+            # Правило: праздник считается "проблемным", если:
+            #  - либо высокая общая доля поражений (>= poor_loss_rate_threshold)
+            #  - либо высокая доля неожиданных поражений (>= unexpected_loss_rate_threshold)
+            if (loss_rate >= poor_loss_rate_threshold) or (unexpected_loss_rate >= unexpected_loss_rate_threshold):
+                poor_performance_after_holidays += 1
+
+        # Условие создания триггера — как и раньше, можно настроить
         if poor_performance_after_holidays >= 2 and total_post_holiday_matches >= 4:
             trigger = PlayerTrigger(
                 player_id=player.id,
@@ -865,28 +1084,30 @@ class MatchAnalysisService:
                 "poor_performance_count": poor_performance_after_holidays,
                 "total_holidays": len(holidays),
                 "total_post_holiday_matches": total_post_holiday_matches,
+                "settings": {
+                    "post_holiday_window_days": post_holiday_window_days,
+                    "min_matches_per_holiday": min_matches_per_holiday,
+                    "poor_loss_rate_threshold": poor_loss_rate_threshold,
+                    "unexpected_loss_rate_threshold": unexpected_loss_rate_threshold,
+                    "unexpected_rating_delta": unexpected_rating_delta
+                },
                 "recommendation": "Рекомендуется усиленная подготовка после отпусков"
             })
-
             self.db.add(trigger)
-            triggers.append(trigger)
+            return [trigger]
 
-        return triggers
+        return []
     
     async def _analyze_time_performance(
-        self, player: Player, matches: List[Match], start_date: date, end_date: date
-    ) -> List[PlayerTrigger]:
-        """Анализ результативности игрока по времени суток"""
+    self, player: Player, matches: List[Match], start_date: date, end_date: date
+) -> List[PlayerTrigger]:
+        """Анализ результативности игрока по времени суток с учётом силы соперников и счёта"""
         triggers = []
 
-        # Фильтруем матчи по периоду и наличию времени
-        filtered_matches = [
-            m for m in matches
-            if start_date <= m.date <= end_date and m.time is not None
-        ]
+        filtered_matches = [m for m in matches if m.time is not None and m.winner_id]
 
-        if len(filtered_matches) >= 8:  # Минимум 8 матчей с указанным временем
-            # Разделяем матчи по времени суток
+        if len(filtered_matches) >= 5:  # минимум 5 матчей
+            # 2) Делим матчи по времени суток
             day_matches = []     # 08:00 - 17:59
             evening_matches = [] # 18:00 - 21:59
             night_matches = []   # 22:00 - 07:59
@@ -900,42 +1121,83 @@ class MatchAnalysisService:
                 else:
                     night_matches.append(match)
 
-            # Анализируем каждый период
+            # 3) Анализируем каждый период
             periods = [
                 ("day", day_matches, "дневное время"),
                 ("evening", evening_matches, "вечернее время"),
-                ("night", night_matches, "ночное время")
+                ("night", night_matches, "ночное время"),
             ]
 
             for period_name, period_matches, period_desc in periods:
                 if len(period_matches) >= 3:
-                    losses = len([m for m in period_matches if m.winner_id and m.winner_id != player.id])
-                    loss_rate = (losses / len(period_matches)) * 100
+                    weighted_losses = 0
+                    total_matches = len(period_matches)
 
-                    # Создаем триггер, если высокий процент поражений
-                    if loss_rate >= 70:
+                    for m in period_matches:
+                        if m.winner_id != player.id:  # поражение
+                            # --- Определяем соперника
+                            opponent_id = m.player1_id if m.player2_id == player.id else m.player2_id
+                            opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+
+                            # --- Базовый вес поражения
+                            loss_weight = 1
+
+                            # --- Учет разницы рейтингов
+                            if opponent and opponent.current_rating is not None and player.current_rating is not None:
+                                rating_diff = player.current_rating - opponent.current_rating
+                                if rating_diff >= 400:   # сильно слабее
+                                    loss_weight += 2
+                                elif rating_diff >= 200: # слабее
+                                    loss_weight += 1
+
+                            # --- Учет счета по сетам
+                            if m.sets_player1 is not None and m.sets_player2 is not None:
+                                if player.id == m.player1_id:
+                                    sets_won, sets_lost = m.sets_player1, m.sets_player2
+                                else:
+                                    sets_won, sets_lost = m.sets_player2, m.sets_player1
+
+                                if sets_won == 0:              # поражение 0:X
+                                    loss_weight += 1
+                                elif sets_won == 1 and sets_lost >= 3:  # поражение 1:3
+                                    loss_weight += 1
+                                # 2:3 — мягче, без доп. штрафа
+
+                            weighted_losses += loss_weight
+
+                    # --- Рассчитываем взвешанный процент поражений
+                    weighted_loss_rate = (weighted_losses / total_matches) * 100
+
+                    # --- Создаём триггер, если проблемы заметны
+                    if weighted_loss_rate >= 70:
                         trigger = PlayerTrigger(
                             player_id=player.id,
                             trigger_type="time_performance",
                             trigger_subtype=period_name,
-                            trigger_value=f"Слабые результаты в {period_desc}: {loss_rate:.1f}% поражений ({losses}/{len(period_matches)})",
-                            severity_level=2 if loss_rate >= 80 else 1,
+                            trigger_value=(
+                                f"Слабые результаты в {period_desc}: "
+                                f"{weighted_loss_rate:.1f}% взвешенных поражений"
+                            ),
+                            severity_level=2 if weighted_loss_rate >= 80 else 1,
                             period_start=start_date,
                             period_end=end_date,
                             is_active=True
                         )
                         trigger.set_metadata({
                             "time_period": period_name,
-                            "loss_rate": loss_rate,
-                            "matches_in_period": len(period_matches),
-                            "losses": losses,
-                            "recommendation": f"Избегать матчей в {period_desc} или усилить подготовку"
+                            "weighted_loss_rate": weighted_loss_rate,
+                            "matches_in_period": total_matches,
+                            "weighted_losses": weighted_losses,
+                            "recommendation": (
+                                f"Избегать матчей в {period_desc} или усилить подготовку"
+                            )
                         })
 
                         self.db.add(trigger)
                         triggers.append(trigger)
 
         return triggers
+
     
     # Остальные методы анализа триггеров будут добавлены аналогично
     async def _analyze_endgame_problems(self, player: Player, matches: List[Match], start_date: date, end_date: date) -> List[PlayerTrigger]:
@@ -1166,70 +1428,70 @@ class MatchAnalysisService:
         return triggers
 
 
-    async def _analyze_won_2_lost_3rd_set(
+    async def _analyze_won_2_lost_3rd_set( #РАБОТАЕТ
     self, player: Player, matches: List[Match], start_date: date, end_date: date
 ) -> List[PlayerTrigger]:
-        """Анализ случаев: выиграл 2 сета, но проиграл 3-й решающий для одного игрока"""
+        """Анализ случаев, когда игрок выиграл первые 2 сета, но проиграл 3-й сет"""
         triggers = []
 
-        # Фильтруем матчи игрока за период
-        player_matches = [
-            m for m in matches
-            if start_date <= m.date <= end_date
-            and (m.player1_id == player.id or m.player2_id == player.id)
-        ]
+        for match in matches:
+            if not (start_date <= match.date <= end_date):
+                continue
 
-        won_2_lost_3rd_count = 0
-        total_3_set_matches = 0
+            # Получаем все сеты матча, отсортированные по номеру
+            sets = sorted(
+                self.db.query(MatchSet).filter(MatchSet.match_id == match.id).all(),
+                key=lambda s: s.set_number
+            )
 
-        for match in player_matches:
-            # Определяем количество сетов игрока и соперника
-            if match.player1_id == player.id:
-                player_sets = match.sets_player1 or 0
-                opponent_sets = match.sets_player2 or 0
-            else:
-                player_sets = match.sets_player2 or 0
-                opponent_sets = match.sets_player1 or 0
+            if len(sets) < 3:
+                continue  # Триггер нужен только если есть хотя бы 3 сета
 
-            total_sets = player_sets + opponent_sets
+            # Определяем, кто первый и второй игрок в таблице MatchSet
+            first_player_sets = []
+            second_player_sets = []
+            for s in sets:
+                if s.match.player1_id == player.id:
+                    first_player_sets.append(s.player1_points)
+                    second_player_sets.append(s.player2_points)
+                else:
+                    first_player_sets.append(s.player2_points)
+                    second_player_sets.append(s.player1_points)
 
-            # Анализируем только матчи с 3 сетами
-            if total_sets == 3:
-                total_3_set_matches += 1
-                # Проверяем, выиграл ли игрок 2 сета, но проиграл матч
-                if player_sets == 2 and opponent_sets == 1 and match.winner_id != player.id:
-                    won_2_lost_3rd_count += 1
+            # Проверяем первые 3 сета
+            first_set_won = first_player_sets[0] > second_player_sets[0]
+            second_set_won = first_player_sets[1] > second_player_sets[1]
+            third_set_won = first_player_sets[2] > second_player_sets[2]
 
-        # Триггер если такое происходит в >=30% случаев от трёхсетовых матчей
-        if won_2_lost_3rd_count > 0 and total_3_set_matches >= 3:
-            percentage = (won_2_lost_3rd_count / total_3_set_matches) * 100
-            if percentage >= 30:
-                severity = 3 if percentage >= 50 else 2
-
+            # Срабатывание триггера: первые два выиграны, третий проигран
+            if first_set_won and second_set_won and not third_set_won:
                 trigger = PlayerTrigger(
                     player_id=player.id,
                     trigger_type="won_2_lost_3rd_set",
                     trigger_subtype="decisive_set_problems",
-                    trigger_value=f"Выиграл 2 сета, проиграл 3-й: {won_2_lost_3rd_count} из {total_3_set_matches} трёхсетовых ({percentage:.1f}%)",
-                    severity_level=severity,
+                    trigger_value=f"Выиграл первые 2 сета, но проиграл 3-й в матче {match.id}",
+                    severity_level=2,
                     period_start=start_date,
                     period_end=end_date,
                     is_active=True
                 )
                 trigger.set_metadata({
-                    "won_2_lost_3rd_count": won_2_lost_3rd_count,
-                    "total_3_set_matches": total_3_set_matches,
-                    "percentage": percentage,
+                    "match_id": match.id,
+                    "first_set": first_player_sets[0:1],
+                    "second_set": first_player_sets[1:2],
+                    "third_set": first_player_sets[2:3],
                     "recommendation": "Проблемы с концентрацией в решающих сетах. Требуется психологическая работа"
                 })
 
                 self.db.add(trigger)
                 triggers.append(trigger)
 
+        self.db.commit()
         return triggers
 
+
     
-    async def _analyze_early_final_exit_advanced(
+    async def _analyze_early_final_exit_advanced( #РАБОТАЕТ
     self, player: Player, matches: List[Match], start_date: date, end_date: date
 ) -> List[PlayerTrigger]:
         """Анализ досрочного выхода из финала (расширенный)"""
@@ -1285,12 +1547,13 @@ class MatchAnalysisService:
 
 
     async def _analyze_led_1_set_lost_match(
-        self, player: Player, matches: List[Match], start_date: date, end_date: date
-    ) -> List[PlayerTrigger]:
-        """Анализ случаев: вел 1 сет и проиграл матч"""
+    self, player: Player, matches: List[Match], start_date: date, end_date: date
+) -> List[PlayerTrigger]:
+        """Анализ случаев: игрок выиграл 1-й сет, но проиграл матч"""
         triggers = []
 
-        player_matches = [
+        # Берём все поражения игрока за период
+        losing_matches = [
             m for m in matches
             if start_date <= m.date <= end_date and
             (m.player1_id == player.id or m.player2_id == player.id) and
@@ -1298,19 +1561,21 @@ class MatchAnalysisService:
         ]
 
         led_1_lost_count = 0
-        total_losses = len(player_matches)
+        total_losses = len(losing_matches)
 
-        for match in player_matches:
-            if match.player1_id == player.id:
-                player_sets = match.sets_player1 or 0
-                opponent_sets = match.sets_player2 or 0
-            else:
-                player_sets = match.sets_player2 or 0
-                opponent_sets = match.sets_player1 or 0
+        for match in losing_matches:
+            # Получаем сеты этого матча из таблицы MatchSet, отсортированные по set_number
+            match_sets = self.db.query(MatchSet).filter(MatchSet.match_id == match.id).order_by(MatchSet.set_number).all()
 
-            if player_sets >= 1 and opponent_sets > player_sets:
+            if not match_sets:
+                continue  # если нет информации по сетам, пропускаем
+
+            # Определяем, кто выиграл первый сет
+            first_set = match_sets[0]
+            if first_set.winner_id == player.id:
                 led_1_lost_count += 1
 
+        # Создаём триггер, если таких матчей достаточно
         if led_1_lost_count > 0 and total_losses >= 3:
             percentage = (led_1_lost_count / total_losses) * 100
             if percentage >= 40:
@@ -1320,7 +1585,7 @@ class MatchAnalysisService:
                     player_id=player.id,
                     trigger_type="led_1_set_lost_match",
                     trigger_subtype="lead_blown",
-                    trigger_value=f"Вёл по сетам и проиграл: {led_1_lost_count} из {total_losses} поражений ({percentage:.1f}%)",
+                    trigger_value=f"Вёл в первом сете и проиграл матч: {led_1_lost_count} из {total_losses} поражений ({percentage:.1f}%)",
                     severity_level=severity,
                     period_start=start_date,
                     period_end=end_date,
@@ -1330,7 +1595,7 @@ class MatchAnalysisService:
                     "led_1_lost_count": led_1_lost_count,
                     "total_losses": total_losses,
                     "percentage": percentage,
-                    "recommendation": "Проблемы с удержанием преимущества"
+                    "recommendation": "Проблемы с удержанием преимущества после первого сета"
                 })
 
                 self.db.add(trigger)
@@ -1339,32 +1604,37 @@ class MatchAnalysisService:
         return triggers
 
 
+
     async def _analyze_led_2_sets_lost_match(
-        self, player: Player, matches: List[Match], start_date: date, end_date: date
-    ) -> List[PlayerTrigger]:
-        """Анализ случаев: вел 2 сета и проиграл матч"""
+    self, player: Player, matches: List[Match], start_date: date, end_date: date
+) -> List[PlayerTrigger]:
+        """Анализ случаев: игрок выиграл 2 сета и проиграл матч"""
         triggers = []
 
         player_matches = [
             m for m in matches
             if start_date <= m.date <= end_date and
-            (m.player1_id == player.id or m.player2_id == player.id)
+            (m.player1_id == player.id or m.player2_id == player.id) and
+            m.winner_id != player.id
         ]
 
         led_2_lost_count = 0
         total_matches = len(player_matches)
 
         for match in player_matches:
-            if match.player1_id == player.id:
-                player_sets = match.sets_player1 or 0
-                opponent_sets = match.sets_player2 or 0
-            else:
-                player_sets = match.sets_player2 or 0
-                opponent_sets = match.sets_player1 or 0
+            # Получаем сеты матча
+            match_sets = self.db.query(MatchSet).filter(MatchSet.match_id == match.id).order_by(MatchSet.set_number).all()
+            if len(match_sets) < 2:
+                continue  # если меньше двух сетов, пропускаем
 
-            total_sets = player_sets + opponent_sets
+            # Проверяем первые два сета
+            first_two_wins = 0
+            for s in match_sets[:2]:
+                if s.winner_id == player.id:
+                    first_two_wins += 1
 
-            if player_sets == 2 and opponent_sets == 3 and total_sets == 5:
+            # Если первые два сета выиграны, а матч проигран
+            if first_two_wins == 2:
                 led_2_lost_count += 1
 
         if led_2_lost_count >= 2:
@@ -1392,41 +1662,56 @@ class MatchAnalysisService:
             triggers.append(trigger)
 
         return triggers
+
     
-    async def _analyze_psychological_breakdown(self, player: Player, matches: List[Match], start_date: date, end_date: date) -> List[PlayerTrigger]:
-        """Анализ психологических срывов (комбинированный триггер)"""
+    async def _analyze_psychological_breakdown(
+        self, player: Player, matches: List[Match], start_date: date, end_date: date
+    ) -> List[PlayerTrigger]:
+        """Анализ психологических срывов (комбинированный триггер с сетами)"""
         triggers = []
-        total_matches = len(matches)
         psychological_issues = 0
         issue_details = []
 
         for match in matches:
-            # Определяем счёт игрока
-            if match.player1_id == player.id:
-                player_sets = match.sets_player1 or 0
-                opponent_sets = match.sets_player2 or 0
-            else:
-                player_sets = match.sets_player2 or 0
-                opponent_sets = match.sets_player1 or 0
+            if not (start_date <= match.date <= end_date):
+                continue
 
-            # Индикаторы психологических проблем
-            if player_sets == 2 and opponent_sets == 3:
+            # Получаем все сеты матча
+            match_sets = self.db.query(MatchSet).filter(MatchSet.match_id == match.id).order_by(MatchSet.set_number).all()
+            if not match_sets:
+                continue
+
+            # Определяем количество сетов игрока и соперника
+            player_set_wins = 0
+            opponent_set_wins = 0
+            for s in match_sets:
+                if s.winner_id == player.id:
+                    player_set_wins += 1
+                else:
+                    opponent_set_wins += 1
+
+            # 1️⃣ Проигрыш после ведения 2:0
+            if player_set_wins == 2 and opponent_set_wins >= 2 and match.winner_id != player.id:
                 psychological_issues += 2
-                issue_details.append("Проиграл с 2:0")
-            elif player_sets == 2 and opponent_sets == 3:
-                psychological_issues += 1
-                issue_details.append("Проиграл решающий сет")
-            elif player_sets == 0 and opponent_sets == 3:
-                psychological_issues += 1
-                issue_details.append("Поражение 0:3")
-            elif match.is_final and match.winner_id != player.id and player_sets <= 1:
+                issue_details.append(f"Проиграл после 2:0 (Match ID: {match.id})")
+
+            # 2️⃣ Полное поражение 0:3
+            if player_set_wins == 0 and opponent_set_wins >= 3:
                 psychological_issues += 2
-                issue_details.append("Досрочный проигрыш в финале")
+                issue_details.append(f"Поражение 0:3 (Match ID: {match.id})")
+
+            # 3️⃣ Досрочный проигрыш в финале
+            if match.is_final and match.winner_id != player.id and player_set_wins <= 1:
+                psychological_issues += 2
+                issue_details.append(f"Досрочный проигрыш в финале (Match ID: {match.id})")
+
+        total_matches = len([m for m in matches if start_date <= m.date <= end_date])
 
         if total_matches >= 5 and psychological_issues > 0:
             issue_rate = (psychological_issues / total_matches) * 100
             if issue_rate >= 30:
                 severity = 3 if issue_rate >= 50 else 2
+
                 trigger = PlayerTrigger(
                     player_id=player.id,
                     trigger_type="psychological_breakdown",
@@ -1444,33 +1729,56 @@ class MatchAnalysisService:
                     "issue_details": issue_details[:10],
                     "recommendation": "Требуется работа со спортивным психологом"
                 })
+
                 self.db.add(trigger)
                 triggers.append(trigger)
 
         return triggers
 
 
-    async def _analyze_comeback_inability(self, player: Player, matches: List[Match], start_date: date, end_date: date) -> List[PlayerTrigger]:
-        """Анализ неспособности совершать камбеки"""
+    async def _analyze_comeback_inability(
+    self, player: Player, matches: List[Match], start_date: date, end_date: date
+) -> List[PlayerTrigger]:
+        """Анализ неспособности совершать камбеки по реальным сетам"""
         triggers = []
         comeback_opportunities = 0
         successful_comebacks = 0
 
         for match in matches:
-            if match.player1_id == player.id:
-                player_sets = match.sets_player1 or 0
-                opponent_sets = match.sets_player2 or 0
-            else:
-                player_sets = match.sets_player2 or 0
-                opponent_sets = match.sets_player1 or 0
-            total_sets = player_sets + opponent_sets
+            # Получаем сеты для текущего матча, сортируем по порядку
+            sets = self.db.query(MatchSet).filter(MatchSet.match_id == match.id).order_by(MatchSet.set_number).all()
+            if not sets:
+                continue
 
-            # Камбек с 0:2 или 1:2 до победы
-            if player_sets == 3 and opponent_sets == 2 and total_sets == 5:
-                comeback_opportunities += 1
-                successful_comebacks += 1
-            elif opponent_sets >= 3 and player_sets < opponent_sets and total_sets >= 4:
-                comeback_opportunities += 1
+            # Определяем очки игрока по сетам
+            player_set_wins = 0
+            opponent_set_wins = 0
+            for s in sets:
+                if s.winner_id == player.id:
+                    player_set_wins += 1
+                else:
+                    opponent_set_wins += 1
+
+            total_sets = player_set_wins + opponent_set_wins
+
+            # Считаем попытки камбеков:
+            # Игрок проигрывал первые 2 сета и выиграл матч → успешный камбек
+            if total_sets >= 3:
+                first_two_sets = sets[:2]
+                player_lost_first_two = sum(1 for s in first_two_sets if s.winner_id != player.id) == 2
+
+                if player_lost_first_two:
+                    comeback_opportunities += 1
+                    if player_set_wins > opponent_set_wins:
+                        successful_comebacks += 1
+                # Также можно учитывать ситуации 1:2, если матч больше 3 сетов
+                elif len(sets) >= 3:
+                    first_three_sets = sets[:3]
+                    player_down_1_2 = sum(1 for s in first_three_sets if s.winner_id != player.id) == 2 and sum(1 for s in first_three_sets if s.winner_id == player.id) == 1
+                    if player_down_1_2:
+                        comeback_opportunities += 1
+                        if player_set_wins > opponent_set_wins:
+                            successful_comebacks += 1
 
         if comeback_opportunities >= 3:
             failure_rate = ((comeback_opportunities - successful_comebacks) / comeback_opportunities) * 100
@@ -1498,23 +1806,70 @@ class MatchAnalysisService:
         return triggers
 
 
-    async def _analyze_pressure_situations(self, player: Player, matches: List[Match], start_date: date, end_date: date) -> List[PlayerTrigger]:
-        """Анализ игры в ситуациях давления"""
-        triggers = []
-        pressure_matches = [m for m in matches if m.is_final or m.is_semifinal or 
-                            (m.stage and ('финал' in m.stage or 'полуфинал' in m.stage))]
-        total_pressure_matches = len(pressure_matches)
-        pressure_losses = sum(1 for m in pressure_matches if m.winner_id != player.id)
 
-        if total_pressure_matches >= 3:
-            win_rate = ((total_pressure_matches - pressure_losses) / total_pressure_matches) * 100
-            if win_rate <= 30:
-                severity = 3 if win_rate <= 15 else 2
+    async def _analyze_pressure_situations(
+    self, player: Player, matches: List[Match], start_date: date, end_date: date
+) -> List[PlayerTrigger]:
+        """Анализ игры в ситуациях давления с учётом сетов и силы соперника"""
+        triggers = []
+
+        # Отбираем матчи под давлением
+        pressure_matches = [
+            m for m in matches 
+            if start_date <= m.date <= end_date and
+            (m.is_final or m.is_semifinal or 
+            (m.stage and ('финал' in m.stage.lower() or 'полуфинал' in m.stage.lower())))
+        ]
+
+        total_pressure_matches = len(pressure_matches)
+        weighted_losses = 0
+
+        for m in pressure_matches:
+            if m.winner_id != player.id:
+                # Определяем соперника
+                opponent_id = m.player1_id if m.player2_id == player.id else m.player2_id
+                opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+
+                # Базовый вес поражения
+                loss_weight = 1
+
+                # Учитываем разницу рейтинга
+                if opponent and opponent.current_rating is not None and player.current_rating is not None:
+                    rating_diff = player.current_rating - opponent.current_rating
+                    if rating_diff >= 400:
+                        loss_weight += 2
+                    elif rating_diff >= 200:
+                        loss_weight += 1
+
+                # Учитываем сетовый счёт
+                if m.sets_player1 is not None and m.sets_player2 is not None:
+                    if player.id == m.player1_id:
+                        player_sets = m.sets_player1
+                        opponent_sets = m.sets_player2
+                    else:
+                        player_sets = m.sets_player2
+                        opponent_sets = m.sets_player1
+
+                    # Большие поражения весятся сильнее
+                    if player_sets == 0 and opponent_sets >= 2:
+                        loss_weight += 2
+                    elif player_sets == 1 and opponent_sets >= 2:
+                        loss_weight += 1
+                    # 2:3 или другие узкие поражения — базовый вес
+
+                weighted_losses += loss_weight
+
+        if total_pressure_matches >= 3 and weighted_losses > 0:
+            weighted_loss_rate = (weighted_losses / total_pressure_matches) * 100
+
+            # Триггер при слабой игре под давлением
+            if weighted_loss_rate >= 30:
+                severity = 3 if weighted_loss_rate >= 50 else 2
                 trigger = PlayerTrigger(
                     player_id=player.id,
                     trigger_type="pressure_situations",
                     trigger_subtype="important_matches",
-                    trigger_value=f"Плохая игра под давлением: {win_rate:.1f}% побед в важных матчах ({total_pressure_matches - pressure_losses}/{total_pressure_matches})",
+                    trigger_value=f"Слабая игра под давлением: {weighted_loss_rate:.1f}% взвешенных поражений",
                     severity_level=severity,
                     period_start=start_date,
                     period_end=end_date,
@@ -1522,14 +1877,16 @@ class MatchAnalysisService:
                 )
                 trigger.set_metadata({
                     "pressure_matches": total_pressure_matches,
-                    "pressure_losses": pressure_losses,
-                    "win_rate": win_rate,
-                    "recommendation": "Специальная подготовка к ответственным матчам"
+                    "weighted_losses": weighted_losses,
+                    "weighted_loss_rate": weighted_loss_rate,
+                    "recommendation": "Специальная подготовка к ответственным матчам, работа над психологической устойчивостью"
                 })
+
                 self.db.add(trigger)
                 triggers.append(trigger)
 
         return triggers
+
 
 
         
@@ -1802,7 +2159,10 @@ class MatchAnalysisService:
             "psychological_breakdown": "психологические срывы",
             "comeback_inability": "неспособность к камбекам",
             "pressure_situations": "проблемы в важных матчах",
-            "losers_50_percent": "низкий процент побед"
+            "losers_50_percent": "низкий процент побед",
+            "losing_streaks": "длинные серии поражений",
+            "time_performance": "проблемы с выступлениями в определённое время суток",
+            "post_holiday_problems": "плохая форма после праздников"
         }
         
         description = trigger_descriptions.get(trigger_type, trigger_type)
