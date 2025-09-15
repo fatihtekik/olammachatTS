@@ -788,7 +788,6 @@ class MatchAnalysisService:
             limited_triggers = player_triggers[:8]
             trigger_values_combined = "\n".join([t.trigger_value for t in limited_triggers])
             ai_text = await self._generate_ai_analysis(
-                "combined_triggers",
                 player.full_name if player else "Неизвестный игрок",
                 trigger_values_combined,
                 player_stats
@@ -2107,14 +2106,14 @@ class MatchAnalysisService:
             "recent_matches": recent_matches
         }
 
-    async def _generate_ai_analysis(self, trigger_type: str, player_name: str, trigger_value: str, player_stats: Dict) -> str:
-        """Генерирует ИИ-анализ для триггера"""
+    async def _generate_ai_analysis(self, player_name: str, trigger_value: str ,  player_stats: Dict) -> str:
+        """Генерирует ИИ-анализ для игрока"""
         if not self._ai_analysis_enabled:
-            return f"Анализ триггера {trigger_type} для игрока {player_name}"
+            return f"Анализ игрока {player_name}"
         
         try:
             # Создаем контекст для ИИ
-            prompt = self._create_analysis_prompt(trigger_type, player_name, trigger_value, player_stats)
+            prompt = self._create_analysis_prompt(player_name, trigger_value, player_stats)
             
             # Вызываем функцию стриминга из ollama_service
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -2138,34 +2137,35 @@ class MatchAnalysisService:
                         except json.JSONDecodeError:
                             continue
                     
-                    return analysis_text if analysis_text.strip() else f"Анализ триггера {trigger_type} для игрока {player_name}"
+                    return analysis_text if analysis_text.strip() else f"Анализ триггера для игрока {player_name}"
                     
         except Exception as e:
             print(f"Ошибка генерации ИИ-анализа: {e}")
-            return f"Не удалось сгенерировать анализ для триггера {trigger_type}"
+            return f"Не удалось сгенерировать анализ для триггера"
     
-    def _create_analysis_prompt(self, trigger_type: str, player_name: str, trigger_value: str, player_stats: Dict) -> str:
+    def _create_analysis_prompt(self, player_name: str, trigger_value: str, player_stats: Dict) -> str:
         """Создает промпт для ИИ-анализа"""
         embeddings, metadata = load_data()
         dop_infa = search(trigger_value, embeddings, metadata, top_k=3)
-        # Описания триггеров
-        trigger_descriptions = {
-            "top_performers": "отличные результаты",
-            "defeat_0_3": "частые поражения 0:3",
-            "won_2_lost_3rd_set": "проигрыш после лидерства 2:0 по сетам",
-            "early_final_exit_advanced": "досрочный уход с корта в финалах",
-            "led_1_set_lost_match": "проигрыш после лидерства в счёте",
-            "led_2_sets_lost_match": "критический проигрыш после лидерства 2:0",
-            "psychological_breakdown": "психологические срывы",
-            "comeback_inability": "неспособность к камбекам",
-            "pressure_situations": "проблемы в важных матчах",
-            "losers_50_percent": "низкий процент побед",
-            "losing_streaks": "длинные серии поражений",
-            "time_performance": "проблемы с выступлениями в определённое время суток",
-            "post_holiday_problems": "плохая форма после праздников"
-        }
+        # sorted_triggers = sorted(player_triggers, key=lambda t: t.severity_level or 0, reverse=True)[:8]
+        # trigger_texts = "\n".join([f"- {t.trigger_type}: {t.trigger_value}" for t in sorted_triggers])
+        # # Описания триггеров
+        # trigger_descriptions = {
+        #     "top_performers": "отличные результаты",
+        #     "defeat_0_3": "частые поражения 0:3",
+        #     "won_2_lost_3rd_set": "проигрыш после лидерства 2:0 по сетам",
+        #     "early_final_exit_advanced": "досрочный уход с корта в финалах",
+        #     "led_1_set_lost_match": "проигрыш после лидерства в счёте",
+        #     "led_2_sets_lost_match": "критический проигрыш после лидерства 2:0",
+        #     "psychological_breakdown": "психологические срывы",
+        #     "comeback_inability": "неспособность к камбекам",
+        #     "pressure_situations": "проблемы в важных матчах",
+        #     "losers_50_percent": "низкий процент побед",
+        #     "losing_streaks": "длинные серии поражений",
+        #     "time_performance": "проблемы с выступлениями в определённое время суток",
+        #     "post_holiday_problems": "плохая форма после праздников"
+        # }
         
-        description = trigger_descriptions.get(trigger_type, trigger_type)
         
         wins = player_stats.get('wins', 0)
         losses = player_stats.get('losses', 0)
@@ -2175,15 +2175,20 @@ class MatchAnalysisService:
         
         prompt = f"""
 Игрок: {player_name}
-Проблема: {description}
+
 Статистика за период:
 - Матчей сыграно: {matches}
 - Побед: {wins} ({win_rate:.1f}%)
 - Поражений: {losses}
 - Последняя форма: {recent_form}
-- Детали триггера: {trigger_value}
 
-Дай профессиональный анализ этой проблемы в 2-3 предложениях. Объясни возможные причины. Вот допольнительная информация про триггер: {[item["text"] for item in dop_infa]}
+Обнаруженные триггеры:
+{trigger_value}
+
+Дополнительная информация из базы знаний:
+{chr(10).join([item["text"] for item in dop_infa])}
+
+Сделай профессиональный анализ игрока в 2-3 предложениях: объясни возможные причины проблем и дай рекомендации.
 """
         print("Промпты которые летят в олламу 🏃🏃🏃🏃🏃🏃🏃", prompt)
         
