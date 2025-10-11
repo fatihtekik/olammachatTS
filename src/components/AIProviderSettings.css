@@ -26,8 +26,8 @@
   background: #ffffff;
   border-radius: 20px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.3);
-  max-width: 750px;
-  width: 90%;
+  max-width: 800px;
+  width: 100%;
   max-height: 90vh;
   overflow-y: auto;
   animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
@@ -88,7 +88,7 @@
 }
 
 .modal-content {
-  padding: 32px;
+  padding: 30px;
   background: #fafafa;
 }
 

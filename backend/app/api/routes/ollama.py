@@ -147,11 +147,11 @@ async def check_status():
         return {"status": "disconnected", "error": str(e)}
 
 
-# 🆕 НОВЫЕ ЭНДПОИНТЫ ДЛЯ LM STUDIO
+# НОВЫЕ ЭНДПОИНТЫ ДЛЯ LM STUDIO
 @router.get("/lmstudio/status", status_code=200)
 async def check_lmstudio_status():
     """
-    🔌 Проверяет статус подключения к LM Studio
+    Проверяет статус подключения к LM Studio
     """
     try:
         from app.services.lm_studio_service import test_lm_studio_connection
@@ -167,10 +167,10 @@ async def list_lmstudio_models(
     current_user = Depends(get_current_active_user)
 ):
     """
-    📋 Получение списка доступных моделей из LM Studio
+    Получение списка доступных моделей из LM Studio
     """
     try:
-        from app.services.lm_studio_service import get_lm_studio_models
+        from app.services.lm_studio_service import get_lm_studio_models, test_lm_studio_connection
         print(f"Получение списка моделей LM Studio для пользователя: {current_user.username}")
         
         is_connected = await test_lm_studio_connection()
