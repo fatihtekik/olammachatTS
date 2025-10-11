@@ -5,6 +5,7 @@ import ModelSelector from './ModelSelector';
 import ChatSessionList from './ChatSessionList';
 import LoadingIndicator from './LoadingIndicator';
 import UserProfile from './UserProfile';
+import AIProviderSettings, { AIProvider } from './AIProviderSettings';
 import { Message, ModelType, ChatSession, MatchData, TriggerResponse } from '../types/chat';
 import { getAvailableModels, testConnection } from '../services/ollamaApi';
 import './ChatPage.css';
@@ -68,6 +69,37 @@ const ChatPage: React.FC<ChatPageProps> = ({
   setConnectionStatus,
   setShowSessions
 }) => {
+  const [showProviderSettings, setShowProviderSettings] = useState(false);
+  const [currentProvider, setCurrentProvider] = useState<AIProvider>(
+    () => (localStorage.getItem('aiProvider') as AIProvider) || 'ollama'
+  );
+
+  // Сохраняем выбор провайдера
+  const handleProviderChange = (provider: AIProvider) => {
+    setCurrentProvider(provider);
+    localStorage.setItem('aiProvider', provider);
+  };
+
+  const refreshModelsForProvider = async () => {
+    setConnectionStatus('checking');
+    try {
+      // В зависимости от провайдера вызываем нужный API
+      const isConnected = await testConnection();
+      if (isConnected) {
+        const freshModels = await getAvailableModels();
+        setModels(freshModels);
+        setConnectionStatus('connected');
+        if (freshModels.length > 0 && !freshModels.some(m => m.id === model)) {
+          setModel(freshModels[0].id);
+        }
+      } else {
+        setConnectionStatus('disconnected');
+      }
+    } catch (error) {
+      console.error('Error refreshing models:', error);
+      setConnectionStatus('disconnected');
+    }
+  };
 
   return (
     <div className="chat-page">
@@ -76,16 +108,23 @@ const ChatPage: React.FC<ChatPageProps> = ({
           <h1>Чат с ИИ</h1>
           {connectionStatus === 'connected' ? (
             <span className="status connected">
-              Подключено к Ollama ({models.length} {models.length === 1 ? 'модель' : models.length < 5 ? 'модели' : 'моделей'} доступно)
+              Подключено к {currentProvider === 'ollama' ? 'Ollama' : 'LM Studio'} ({models.length} {models.length === 1 ? 'модель' : models.length < 5 ? 'модели' : 'моделей'} доступно)
             </span>
           ) : connectionStatus === 'disconnected' ? (
-            <span className="status disconnected">Ollama not available</span>
+            <span className="status disconnected">{currentProvider === 'ollama' ? 'Ollama' : 'LM Studio'} not available</span>
           ) : (
             <span className="status checking">Checking connection...</span>
           )}
         </div>
         
         <div className="actions">
+          <button 
+            onClick={() => setShowProviderSettings(true)} 
+            className="settings-button"
+            title="Настройки AI провайдера"
+          >
+            <i className="bi bi-gear"></i>
+          </button>
           <button onClick={() => setShowSessions(!showSessions)} className="session-button">
             {showSessions ? 'Скрыть сессии' : 'Показать сессии'}
           </button>
@@ -105,6 +144,14 @@ const ChatPage: React.FC<ChatPageProps> = ({
           </div>
         </div>
       </header>
+      
+      <AIProviderSettings
+        isOpen={showProviderSettings}
+        onClose={() => setShowProviderSettings(false)}
+        currentProvider={currentProvider}
+        onProviderChange={handleProviderChange}
+        onRefreshModels={refreshModelsForProvider}
+      />
       
       <div className="chat-content-wrapper">
         {showSessions && (

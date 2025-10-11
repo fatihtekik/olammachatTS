@@ -50,9 +50,12 @@ class Settings(BaseSettings):
     # 🗄️ База данных - здесь хранятся чаты, пользователи и пр.
     DATABASE_URL: str = "sqlite:///./ollamachat.db"  # SQLite файл в текущей папке
     
-    # 🤖 ГЛАВНАЯ НАСТРОЙКА OLLAMA!
-    # Если Ollama запущена на другом компьютере или порту - меняйте здесь!
-    OLLAMA_API_URL: str = "http://localhost:11434"  # Стандартный адрес локальной Ollama
+    # 🤖 НАСТРОЙКИ AI ПРОВАЙДЕРОВ (OLLAMA + LM STUDIO)
+    # Ollama стандартный URL
+    OLLAMA_API_URL: str = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
+    
+    # LM Studio стандартный URL
+    LM_STUDIO_API_URL: str = os.getenv("LM_STUDIO_API_URL", "http://localhost:1234/v1")
     
     class Config:
         case_sensitive = True  # Настройки чувствительны к регистру

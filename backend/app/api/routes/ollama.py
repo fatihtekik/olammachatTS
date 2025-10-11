@@ -147,6 +147,52 @@ async def check_status():
         return {"status": "disconnected", "error": str(e)}
 
 
+# 🆕 НОВЫЕ ЭНДПОИНТЫ ДЛЯ LM STUDIO
+@router.get("/lmstudio/status", status_code=200)
+async def check_lmstudio_status():
+    """
+    🔌 Проверяет статус подключения к LM Studio
+    """
+    try:
+        from app.services.lm_studio_service import test_lm_studio_connection
+        is_connected = await test_lm_studio_connection()
+        return {"status": "connected" if is_connected else "disconnected"}
+    except Exception as e:
+        print(f"Ошибка проверки статуса LM Studio: {e}")
+        return {"status": "disconnected", "error": str(e)}
+
+
+@router.get("/lmstudio/models", response_model=List[OllamaModel])
+async def list_lmstudio_models(
+    current_user = Depends(get_current_active_user)
+):
+    """
+    📋 Получение списка доступных моделей из LM Studio
+    """
+    try:
+        from app.services.lm_studio_service import get_lm_studio_models
+        print(f"Получение списка моделей LM Studio для пользователя: {current_user.username}")
+        
+        is_connected = await test_lm_studio_connection()
+        if not is_connected:
+            print("Нет соединения с LM Studio API")
+            raise HTTPException(status_code=503, 
+                               detail="Cannot connect to LM Studio API. Please make sure LM Studio is running.")
+        
+        models = await get_lm_studio_models()
+        print(f"Найдено моделей LM Studio: {len(models)}")
+        
+        if len(models) == 0:
+            return [{"id": "none", "name": "No models loaded in LM Studio"}]
+        
+        return models
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Ошибка получения списка моделей LM Studio: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 # Модель запроса для данных о матче
 class MatchData(BaseModel):
