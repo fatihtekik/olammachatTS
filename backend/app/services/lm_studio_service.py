@@ -101,3 +101,75 @@ async def send_message_to_lm_studio(model: str, messages: List[Dict[str, str]]) 
     except Exception as e:
         logger.error(f"Ошибка отправки сообщения в LM Studio: {e}")
         return f"Ошибка связи с LM Studio: {str(e)}"
+
+
+async def stream_message_to_lm_studio(model: str, messages: List[Dict[str, str]]):
+    """
+    Отправляет сообщение в LM Studio и получает потоковый ответ
+    
+    Использует OpenAI-совместимый формат с включенным streaming
+    Возвращает асинхронный генератор для чанков текста
+    """
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            # OpenAI-совместимый формат с streaming
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": -1,
+                "stream": True  # Включаем стриминг
+            }
+            
+            async with client.stream(
+                "POST",
+                f"{settings.LM_STUDIO_API_URL}/v1/chat/completions",
+                json=payload
+            ) as response:
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    logger.error(f"LM Studio вернул статус {response.status_code}: {error_text}")
+                    yield f"Ошибка: LM Studio вернул статус {response.status_code}"
+                    return
+                
+                # Читаем потоковый ответ
+                buffer = ""
+                async for chunk in response.aiter_bytes():
+                    buffer += chunk.decode('utf-8')
+                    
+                    # LM Studio возвращает SSE формат (Server-Sent Events)
+                    # Каждая строка начинается с "data: " и содержит JSON
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+                        
+                        # Пропускаем пустые строки и комментарии
+                        if not line or line.startswith(':'):
+                            continue
+                        
+                        # Убираем префикс "data: "
+                        if line.startswith('data: '):
+                            line = line[6:]
+                        
+                        # Проверяем на финальный маркер
+                        if line == '[DONE]':
+                            break
+                        
+                        try:
+                            import json
+                            data = json.loads(line)
+                            
+                            # OpenAI streaming формат: {"choices": [{"delta": {"content": "текст"}}]}
+                            if "choices" in data and len(data["choices"]) > 0:
+                                delta = data["choices"][0].get("delta", {})
+                                content = delta.get("content", "")
+                                
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            # Игнорируем некорректные JSON строки
+                            continue
+                
+    except Exception as e:
+        logger.error(f"Ошибка потоковой отправки в LM Studio: {e}")
+        yield f"Ошибка связи с LM Studio: {str(e)}"

@@ -7,7 +7,7 @@ import AnalysisPage from './components/AnalysisPage';
 import ChatPage from './components/ChatPage';
 import ExcelUploadPage from './components/ExcelUploadPage';
 import { Message, ModelType, ChatSession, FileAttachment, MatchData, TriggerResponse } from './types/chat';
-import { sendMessage } from './services/ollamaBackendApi';
+import { sendMessage, sendMessageStreaming } from './services/ollamaBackendApi';
 import { getAvailableModels, testConnection } from './services/aiProviderApi';
 import { exportSessionsToFile, importSessionsFromFile } from './services/storageService';
 import Auth from './components/Auth';
@@ -19,6 +19,7 @@ function App() {
   // Current session state
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [model, setModel] = useState<ModelType>('phi3');
   
   // Session history state
@@ -395,29 +396,78 @@ function App() {
       await createNewSession();
     }
     
+    // Получаем текущий провайдер и настройку стриминга
+    const currentProvider = (localStorage.getItem('aiProvider') as 'ollama' | 'lmstudio') || 'ollama';
+    const streamingEnabled = JSON.parse(localStorage.getItem('streamingEnabled') || 'true');
+    
     // Add user message
     const userMessage: Message = {
       id: uuidv4(),
       role: 'user',
       content: content,
-      timestamp: new Date()
+      timestamp: new Date(),
+      provider: currentProvider,
+      model: model
     };
     
     setMessages(messages => [...messages, userMessage]);
     setIsLoading(true);
     
     try {
-      // Call Ollama API
-      const response = await sendMessage(model, [...messages, userMessage]);
+      let responseContent = '';
       
-      const assistantMessage: Message = {
-        id: uuidv4(),
-        role: 'assistant',
-        content: response,
-        timestamp: new Date()
-      };
-      
-      setMessages(messages => [...messages, assistantMessage]);
+      if (streamingEnabled) {
+        // Включаем режим стриминга
+        setIsStreaming(true);
+        
+        // Создаем пустое сообщение ассистента, которое будем заполнять
+        const assistantMessageId = uuidv4();
+        const assistantMessage: Message = {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: '',
+          timestamp: new Date(),
+          provider: currentProvider,
+          model: model
+        };
+        
+        setMessages(msgs => [...msgs, assistantMessage]);
+        setIsLoading(false); // Убираем LoadingIndicator при стриминге
+        
+        // Вызываем API со стримингом
+        await sendMessageStreaming(
+          model,
+          [...messages, userMessage],
+          (chunk: string) => {
+            responseContent += chunk;
+            // Обновляем сообщение с новым контентом
+            setMessages(msgs => 
+              msgs.map(msg => 
+                msg.id === assistantMessageId 
+                  ? { ...msg, content: responseContent }
+                  : msg
+              )
+            );
+          },
+          currentProvider
+        );
+        
+        setIsStreaming(false);
+      } else {
+        // Обычный режим без стриминга
+        responseContent = await sendMessage(model, [...messages, userMessage], currentProvider);
+        
+        const assistantMessage: Message = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: responseContent,
+          timestamp: new Date(),
+          provider: currentProvider,
+          model: model
+        };
+        
+        setMessages(messages => [...messages, assistantMessage]);
+      }
       
       // Generate title for new sessions based on first message
       if (sessions.find(s => s.id === activeSessionId)?.messages.length === 0) {
@@ -428,11 +478,19 @@ function App() {
       }
     } catch (error: any) {
       console.error('Error sending message:', error);
-        let errorContent = `Error: ${error.message || 'Failed to get response'}`;
+      const currentProvider = (localStorage.getItem('aiProvider') as 'ollama' | 'lmstudio') || 'ollama';
+      let errorContent = `Error: ${error.message || 'Failed to get response'}`;
       
-      // Add helpful instructions if the model was not found
-      if (error.message && error.message.includes('not found')) {
-        errorContent += `\n\nPlease make sure the model "${model}" is installed on your Ollama instance.\n\nYou can install it by running this command in your terminal:\n\nollama pull ${model}\n\nAfter installation is complete, click the refresh button (↻) next to the model selector to update the available models list or try sending your message again.\n\nAvailable models: ${models.map(m => m.id).join(', ')}`;
+      // Специальная обработка для ошибки 404 или not found
+      if (error.message && (error.message.includes('404') || error.message.includes('not found'))) {
+        const providerName = currentProvider === 'lmstudio' ? 'LM Studio' : 'Ollama';
+        errorContent = `Модель "${model}" не загружена в память ${providerName}.\n\n`;
+        
+        if (currentProvider === 'lmstudio') {
+          errorContent += `Пожалуйста:\n1. Откройте LM Studio\n2. Загрузите модель "${model}" в память (кнопка "Load model")\n3. Убедитесь, что локальный сервер запущен (Server tab → Start Server)\n4. Попробуйте снова`;
+        } else {
+          errorContent += `Пожалуйста:\n1. Установите модель командой: ollama pull ${model}\n2. Или выберите другую модель из списка: ${models.map(m => m.id).join(', ')}`;
+        }
       }
       
       const errorMessage: Message = {
@@ -440,7 +498,9 @@ function App() {
         role: 'assistant',
         content: errorContent,
         timestamp: new Date(),
-        error: true
+        error: true,
+        provider: currentProvider,
+        model: model
       };
       
       setMessages(messages => [...messages, errorMessage]);
@@ -544,6 +604,7 @@ function App() {
                   currentUser={currentUser}
                   messages={messages}
                   isLoading={isLoading}
+                  isStreaming={isStreaming}
                   model={model}
                   sessions={sessions}
                   activeSessionId={activeSessionId}

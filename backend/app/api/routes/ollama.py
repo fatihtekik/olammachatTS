@@ -35,6 +35,7 @@ class ChatRequest(BaseModel):
     """📨 Что нам присылает фронтенд для чата"""
     model: str                          # Какую модель использовать (например, "phi3")
     messages: List[Dict[str, str]]      # История сообщений [{"role": "user", "content": "привет"}]
+    stream: Optional[bool] = False      # Включить потоковую передачу
 
 class ChatResponse(BaseModel):
     """📤 Что мы отправляем обратно фронтенду"""
@@ -49,7 +50,7 @@ class OllamaModel(BaseModel):
 # 🔐 ВСЕ ЭНДПОИНТЫ ТРЕБУЮТ АВТОРИЗАЦИИ!
 # current_user = Depends(get_current_active_user) проверяет токен
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat")
 async def chat_with_model(
     request: ChatRequest,
     current_user = Depends(get_current_active_user)  # 🔒 Только для авторизованных!
@@ -58,7 +59,7 @@ async def chat_with_model(
     💬 ГЛАВНЫЙ ЭНДПОИНТ ДЛЯ ЧАТА С ИИ
     
     Принимает сообщения от фронтенда и отправляет их в Ollama.
-    Использует потоковый режим для быстрой работы.
+    Поддерживает потоковый режим для быстрой работы.
     
     Для чайников: если чат не работает, проблема либо здесь, 
     либо в ollama_service.py, либо Ollama не запущена.
@@ -67,23 +68,38 @@ async def chat_with_model(
         # 📊 Логируем для отладки (смотрите в консоли бэкенда)
         print(f"🎯 Запрос к модели {request.model} от пользователя {current_user.username}")
         print(f"Количество сообщений в истории: {len(request.messages)}")
+        print(f"Режим стриминга: {request.stream}")
         
-        # 🌊 Используем потоковый режим - быстрее и надежнее!
-        response = await send_streaming_message(model=request.model, messages=request.messages)
-        
-        # 🚨 Проверяем, что модель что-то ответила
-        if not response or response.strip() == "":
-            print("ВНИМАНИЕ: Получен пустой ответ от модели!")
-            response = "Модель вернула пустой ответ. Пожалуйста, попробуйте еще раз или выберите другую модель."
+        # Если включен стриминг, возвращаем StreamingResponse
+        if request.stream:
+            async def generate():
+                try:
+                    async for chunk in ollama_stream(model=request.model, messages=request.messages):
+                        # Отправляем chunk в формате NDJSON (newline-delimited JSON)
+                        import json
+                        yield json.dumps({"content": chunk}) + "\n"
+                except Exception as e:
+                    import json
+                    yield json.dumps({"error": str(e)}) + "\n"
+            
+            return StreamingResponse(generate(), media_type="application/x-ndjson")
         else:
-            print(f"✅ Модель {request.model} успешно ответила (длина: {len(response)} символов)")
-        
-        print(f"Получен ответ длиной {len(response)} символов")
-        
-        return ChatResponse(
-            content=response,
-            model=request.model
-        )
+            # Обычный режим без стриминга
+            response = await send_streaming_message(model=request.model, messages=request.messages)
+            
+            # 🚨 Проверяем, что модель что-то ответила
+            if not response or response.strip() == "":
+                print("ВНИМАНИЕ: Получен пустой ответ от модели!")
+                response = "Модель вернула пустой ответ. Пожалуйста, попробуйте еще раз или выберите другую модель."
+            else:
+                print(f"✅ Модель {request.model} успешно ответила (длина: {len(response)} символов)")
+            
+            print(f"Получен ответ длиной {len(response)} символов")
+            
+            return ChatResponse(
+                content=response,
+                model=request.model
+            )
     except HTTPException as e:
         # HTTP ошибки пробрасываем как есть (401, 404, 500 и т.д.)
         raise e
@@ -190,6 +206,65 @@ async def list_lmstudio_models(
         raise e
     except Exception as e:
         print(f"Ошибка получения списка моделей LM Studio: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/lmstudio/chat")
+async def chat_with_lmstudio(
+    request: ChatRequest,
+    current_user = Depends(get_current_active_user)
+):
+    """
+    Отправка сообщения в LM Studio и получение ответа
+    Поддерживает потоковый режим для быстрой работы.
+    """
+    try:
+        from app.services.lm_studio_service import (
+            send_message_to_lm_studio, 
+            test_lm_studio_connection,
+            stream_message_to_lm_studio
+        )
+        print(f"Запрос к LM Studio модели {request.model} от пользователя {current_user.username}")
+        print(f"Количество сообщений в истории: {len(request.messages)}")
+        print(f"Режим стриминга: {request.stream}")
+        
+        # Проверяем подключение
+        is_connected = await test_lm_studio_connection()
+        if not is_connected:
+            raise HTTPException(status_code=503, 
+                               detail="Cannot connect to LM Studio API. Please make sure LM Studio is running.")
+        
+        # Если включен стриминг
+        if request.stream:
+            async def generate():
+                try:
+                    async for chunk in stream_message_to_lm_studio(model=request.model, messages=request.messages):
+                        # Отправляем chunk в формате NDJSON
+                        import json
+                        yield json.dumps({"content": chunk}) + "\n"
+                except Exception as e:
+                    import json
+                    yield json.dumps({"error": str(e)}) + "\n"
+            
+            return StreamingResponse(generate(), media_type="application/x-ndjson")
+        else:
+            # Обычный режим без стриминга
+            response = await send_message_to_lm_studio(model=request.model, messages=request.messages)
+            
+            if not response or response.strip() == "":
+                print("ВНИМАНИЕ: Получен пустой ответ от LM Studio!")
+                response = "LM Studio вернула пустой ответ. Пожалуйста, попробуйте еще раз."
+            else:
+                print(f"Модель {request.model} успешно ответила (длина: {len(response)} символов)")
+            
+            return ChatResponse(
+                content=response,
+                model=request.model
+            )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Ошибка отправки сообщения в LM Studio: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -89,3 +89,148 @@
   margin: 8px 0;
   overflow-x: auto;
 }
+
+/* Markdown стили для AI сообщений */
+.chat-message.assistant .message-content {
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+/* Заголовки */
+.chat-message.assistant .message-content h1,
+.chat-message.assistant .message-content h2,
+.chat-message.assistant .message-content h3,
+.chat-message.assistant .message-content h4,
+.chat-message.assistant .message-content h5,
+.chat-message.assistant .message-content h6 {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #1a1a1a;
+}
+
+.chat-message.assistant .message-content h1 { font-size: 1.8em; }
+.chat-message.assistant .message-content h2 { font-size: 1.5em; }
+.chat-message.assistant .message-content h3 { font-size: 1.3em; }
+.chat-message.assistant .message-content h4 { font-size: 1.1em; }
+
+/* Параграфы */
+.chat-message.assistant .message-content p {
+  margin-bottom: 12px;
+  margin-top: 0;
+}
+
+/* Списки */
+.chat-message.assistant .message-content ul,
+.chat-message.assistant .message-content ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.chat-message.assistant .message-content li {
+  margin: 4px 0;
+}
+
+/* Инлайн код */
+.chat-message.assistant .message-content code {
+  background-color: rgba(27, 31, 35, 0.05);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Courier New', Consolas, Monaco, monospace;
+  font-size: 0.9em;
+  color: #e83e8c;
+}
+
+/* Блоки кода */
+.chat-message.assistant .message-content pre {
+  background-color: #282c34;
+  color: #abb2bf;
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 12px 0;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+.chat-message.assistant .message-content pre code {
+  background-color: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: 1em;
+  display: block;
+}
+
+/* Цитаты */
+.chat-message.assistant .message-content blockquote {
+  border-left: 4px solid #ddd;
+  padding-left: 16px;
+  margin: 12px 0;
+  color: #666;
+  font-style: italic;
+}
+
+/* Таблицы */
+.chat-message.assistant .message-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+  font-size: 0.9em;
+}
+
+.chat-message.assistant .message-content th,
+.chat-message.assistant .message-content td {
+  border: 1px solid #ddd;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.chat-message.assistant .message-content th {
+  background-color: rgba(0, 0, 0, 0.05);
+  font-weight: 600;
+}
+
+.chat-message.assistant .message-content tr:nth-child(even) {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+/* Ссылки */
+.chat-message.assistant .message-content a {
+  color: #0366d6;
+  text-decoration: none;
+}
+
+.chat-message.assistant .message-content a:hover {
+  text-decoration: underline;
+}
+
+/* Жирный текст */
+.chat-message.assistant .message-content strong {
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+/* Курсив */
+.chat-message.assistant .message-content em {
+  font-style: italic;
+}
+
+/* Горизонтальная линия */
+.chat-message.assistant .message-content hr {
+  border: none;
+  border-top: 2px solid #e1e4e8;
+  margin: 16px 0;
+}
+
+/* Анимация курсора при стриминге (опционально) */
+.chat-message.assistant.streaming .message-content::after {
+  content: '▊';
+  animation: blink 1s infinite;
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}

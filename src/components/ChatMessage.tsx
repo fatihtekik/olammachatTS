@@ -1,7 +1,11 @@
 import React from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
 import { Message } from '../types/chat';
 import FileAttachment from './FileAttachment';
 import './ChatMessage.css';
+import 'highlight.js/styles/github-dark.css';
 
 interface ChatMessageProps {
   message: Message;
@@ -24,15 +28,43 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
     <div className={`chat-message ${message.role} ${hasError ? 'error-message' : ''}`}>
       <div className="message-header">
         <span className="message-role">
-          {message.role === 'user' ? 'Вы' : 'Ollama'}
+          {message.role === 'user' 
+            ? 'Вы' 
+            : message.provider === 'lmstudio' 
+              ? 'LM Studio' 
+              : 'Ollama'}
         </span>
         <span className="message-time">
           {formattedTime()}
         </span>
       </div>
       
-      {/* Текстовое сообщение */}
-      <div className="message-content">{message.content}</div>
+      {/* Текстовое сообщение с markdown форматированием для AI */}
+      <div className="message-content">
+        {message.role === 'assistant' ? (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeHighlight]}
+            components={{
+              code({ node, inline, className, children, ...props }: any) {
+                return inline ? (
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                ) : (
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                );
+              }
+            }}
+          >
+            {message.content}
+          </ReactMarkdown>
+        ) : (
+          message.content
+        )}
+      </div>
       
       {/* Вложения файлов */}
       {hasAttachments && (

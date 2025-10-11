@@ -20,6 +20,7 @@ interface ChatPageProps {
   currentUser: {id: string, username: string, email: string, full_name?: string} | null;
   messages: Message[];
   isLoading: boolean;
+  isStreaming: boolean;
   model: ModelType;
   sessions: ChatSession[];
   activeSessionId: string | null;
@@ -50,6 +51,7 @@ const ChatPage: React.FC<ChatPageProps> = ({
   currentUser,
   messages,
   isLoading,
+  isStreaming,
   model,
   sessions,
   activeSessionId,
@@ -76,6 +78,16 @@ const ChatPage: React.FC<ChatPageProps> = ({
 }) => {
   const [showProviderSettings, setShowProviderSettings] = useState(false);
   const [currentProvider, setCurrentProvider] = useState<AIProvider>(getCurrentProvider);
+  const [streamingEnabled, setStreamingEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem('streamingEnabled');
+    return saved !== null ? JSON.parse(saved) : true; // По умолчанию включен
+  });
+
+  // Сохраняем настройку стриминга
+  const handleStreamingChange = (enabled: boolean) => {
+    setStreamingEnabled(enabled);
+    localStorage.setItem('streamingEnabled', JSON.stringify(enabled));
+  };
 
   // Обновляем провайдера и перезагружаем модели
   const handleProviderChange = async (provider: AIProvider) => {
@@ -163,6 +175,8 @@ const ChatPage: React.FC<ChatPageProps> = ({
         currentProvider={currentProvider}
         onProviderChange={handleProviderChange}
         onRefreshModels={refreshModelsForProvider}
+        streamingEnabled={streamingEnabled}
+        onStreamingChange={handleStreamingChange}
       />
       
       <div className="chat-content-wrapper">
@@ -197,7 +211,8 @@ const ChatPage: React.FC<ChatPageProps> = ({
             {messages.map((message) => (
               <ChatMessage key={message.id} message={message} />
             ))}
-            {isLoading && <LoadingIndicator model={model} />}
+            {/* Показываем LoadingIndicator только если загрузка И НЕ стриминг */}
+            {isLoading && !isStreaming && <LoadingIndicator model={model} />}
             {messages.length === 0 && (
               <div className="empty-chat">
                 <h2>Start a new conversation</h2>

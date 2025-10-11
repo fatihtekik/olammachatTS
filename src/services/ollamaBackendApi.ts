@@ -34,10 +34,14 @@ const getHeaders = () => {
 
 export async function sendMessage(
   model: ModelType,
-  messages: Message[]
+  messages: Message[],
+  provider?: 'ollama' | 'lmstudio'
 ): Promise<string> {
   try {
-    console.log(`Preparing to send message to model: ${model} via backend`);
+    // Получаем текущий провайдер из localStorage, если не передан явно
+    const currentProvider = provider || (localStorage.getItem('aiProvider') as 'ollama' | 'lmstudio') || 'ollama';
+    
+    console.log(`Preparing to send message to model: ${model} via ${currentProvider}`);
     
     // Format messages for API
     const formattedMessages = messages.map(msg => ({
@@ -45,9 +49,11 @@ export async function sendMessage(
       content: msg.content
     }));
 
-    // Отправляем запрос в бэкенд вместо напрямую в Ollama
-    console.log('Sending chat request to backend with headers:', getHeaders());
-    const response = await fetch(`${API_BASE_URL}/ollama/chat`, {
+    // Выбираем правильный эндпоинт в зависимости от провайдера
+    const endpoint = currentProvider === 'lmstudio' ? '/ollama/lmstudio/chat' : '/ollama/chat';
+    
+    console.log(`Sending chat request to ${endpoint} with headers:`, getHeaders());
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({
@@ -94,38 +100,218 @@ export async function sendMessage(
     }
     
     return data.content;  } catch (error) {    
-    // Обработка ошибок аналогично имеющемуся коду
-    console.error('Error communicating with Ollama backend:', error);
+    // Получаем текущий провайдер для более точного сообщения об ошибке
+    const currentProvider = provider || (localStorage.getItem('aiProvider') as 'ollama' | 'lmstudio') || 'ollama';
+    const providerName = currentProvider === 'lmstudio' ? 'LM Studio' : 'Ollama';
+    
+    console.error(`Error communicating with ${providerName} backend:`, error);
     
     // Создаем более информативное сообщение об ошибке
-    let errorMessage = "Ошибка при общении с сервером";
+    let errorMessage = `Ошибка при общении с ${providerName}`;
     
     if (error instanceof Error) {
       errorMessage = error.message;
       
-      // Если ошибка содержит указание о загрузке модели, добавляем подсказку
-      if (errorMessage.includes("pull") || errorMessage.includes("not found")) {
-        errorMessage += "\n\nВы можете установить модели с помощью команды: 'ollama pull модель' (например, 'ollama pull phi3')";
+      // Для Ollama добавляем инструкции по установке моделей
+      if (currentProvider === 'ollama') {
+        if (errorMessage.includes("pull") || errorMessage.includes("not found")) {
+          errorMessage += "\n\nВы можете установить модели с помощью команды: 'ollama pull модель' (например, 'ollama pull phi3')";
+        }
+        
+        if (isLargeModel(model) && !errorMessage.includes("large model")) {
+          errorMessage += "\n\nЭто большая модель, которая может загружаться несколько минут при первом запуске.";
+        }
+        
+        errorMessage += "\n\nУбедитесь, что:\n1. Сервер Ollama запущен (команда 'ollama serve')\n2. Бэкенд приложения запущен\n3. Модель установлена и доступна";
+      } else {
+        // Для LM Studio другие инструкции
+        errorMessage += "\n\nУбедитесь, что:\n1. LM Studio запущен\n2. Локальный сервер включен (Server tab → Start Server)\n3. Модель загружена в LM Studio\n4. Бэкенд приложения запущен";
       }
       
-      // Для больших моделей добавляем дополнительные инструкции
-      if (isLargeModel(model) && !errorMessage.includes("large model")) {
-        errorMessage += "\n\nЭто большая модель, которая может загружаться несколько минут при первом запуске. Если она работала в терминале, попробуйте подождать и повторить запрос.";
-      }
-      
-      // Добавляем подсказку о проверке соединения
-      errorMessage += "\n\nУбедитесь, что:\n1. Сервер Ollama запущен (команда 'ollama serve')\n2. Бэкенд приложения запущен\n3. Модель установлена и доступна";
-      
-      // Создаем новую ошибку с улучшенным сообщением
       const enhancedError = new Error(errorMessage);
-      // Сохраняем свойства стека из оригинальной ошибки, если они есть
       if (error.stack) {
         enhancedError.stack = error.stack;
       }
       throw enhancedError;
     }
     
-    // Если не Error объект, просто пробрасываем исходную ошибку
+    throw error;
+  }
+}
+
+// Новая функция для отправки сообщения со стримингом
+export async function sendMessageStreaming(
+  model: ModelType,
+  messages: Message[],
+  onChunk: (chunk: string) => void,
+  provider?: 'ollama' | 'lmstudio'
+): Promise<void> {
+  try {
+    // Получаем текущий провайдер из localStorage, если не передан явно
+    const currentProvider = provider || (localStorage.getItem('aiProvider') as 'ollama' | 'lmstudio') || 'ollama';
+    
+    console.log(`Preparing to send streaming message to model: ${model} via ${currentProvider}`);
+    
+    // Format messages for API
+    const formattedMessages = messages.map(msg => ({
+      role: msg.role,
+      content: msg.content
+    }));
+
+    // Выбираем правильный эндпоинт в зависимости от провайдера
+    const endpoint = currentProvider === 'lmstudio' ? '/ollama/lmstudio/chat' : '/ollama/chat';
+    
+    console.log(`Sending streaming chat request to ${endpoint}`);
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        model,
+        messages: formattedMessages,
+        stream: true  // Включаем стриминг
+      }),
+      credentials: 'include',
+    });
+
+    console.log('Streaming response status:', response.status);
+    
+    if (!response.ok) {
+      let errorMessage = `Error: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.detail || errorMessage;
+      } catch (e) {
+        const errorText = await response.text();
+        errorMessage = errorText || errorMessage;
+      }
+      
+      console.error('Error response from backend:', errorMessage);
+      throw new Error(errorMessage);
+    }
+
+    // Читаем поток данных
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('Response body is not readable');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      
+      if (done) {
+        break;
+      }
+
+      // Декодируем chunk
+      buffer += decoder.decode(value, { stream: true });
+      
+      // Обрабатываем построчно (NDJSON формат)
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Сохраняем последнюю неполную строку
+
+      for (const line of lines) {
+        if (line.trim() === '') continue;
+        
+        try {
+          const data = JSON.parse(line);
+          
+          // Проверяем наличие ошибки в ответе
+          if (data.error) {
+            console.error('Error from backend stream:', data.error);
+            throw new Error(data.error);
+          }
+          
+          // Для Ollama формат: {content: "text"}
+          // Для LM Studio формат: {choices: [{delta: {content: "text"}}]}
+          let content = '';
+          
+          if (data.content) {
+            // Ollama формат
+            content = data.content;
+          } else if (data.choices && data.choices[0]?.delta?.content) {
+            // LM Studio формат
+            content = data.choices[0].delta.content;
+          }
+          
+          if (content) {
+            onChunk(content);
+          }
+        } catch (parseError) {
+          console.error('Error parsing streaming chunk:', parseError, 'Line:', line);
+          // Если это не ошибка парсинга, а реальная ошибка от сервера - пробрасываем дальше
+          if (parseError instanceof Error && parseError.message !== 'Unexpected token') {
+            throw parseError;
+          }
+        }
+      }
+    }
+
+    // Обработаем остаток buffer
+    if (buffer.trim()) {
+      try {
+        const data = JSON.parse(buffer);
+        
+        // Проверяем наличие ошибки
+        if (data.error) {
+          console.error('Error in final buffer:', data.error);
+          throw new Error(data.error);
+        }
+        
+        let content = '';
+        
+        if (data.content) {
+          content = data.content;
+        } else if (data.choices && data.choices[0]?.delta?.content) {
+          content = data.choices[0].delta.content;
+        }
+        
+        if (content) {
+          onChunk(content);
+        }
+      } catch (parseError) {
+        console.error('Error parsing final buffer:', parseError);
+        // Пробрасываем реальные ошибки от сервера
+        if (parseError instanceof Error && !parseError.message.includes('JSON')) {
+          throw parseError;
+        }
+      }
+    }
+
+  } catch (error) {
+    const currentProvider = provider || (localStorage.getItem('aiProvider') as 'ollama' | 'lmstudio') || 'ollama';
+    const providerName = currentProvider === 'lmstudio' ? 'LM Studio' : 'Ollama';
+    
+    console.error(`Error communicating with ${providerName} backend:`, error);
+    
+    let errorMessage = `Ошибка при общении с ${providerName}`;
+    
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      
+      if (currentProvider === 'ollama') {
+        if (errorMessage.includes("pull") || errorMessage.includes("not found")) {
+          errorMessage += "\n\nВы можете установить модели с помощью команды: 'ollama pull модель' (например, 'ollama pull phi3')";
+        }
+        
+        if (isLargeModel(model) && !errorMessage.includes("large model")) {
+          errorMessage += "\n\nЭто большая модель, которая может загружаться несколько минут при первом запуске.";
+        }
+        
+        errorMessage += "\n\nУбедитесь, что:\n1. Сервер Ollama запущен (команда 'ollama serve')\n2. Бэкенд приложения запущен\n3. Модель установлена и доступна";
+      } else {
+        errorMessage += "\n\nУбедитесь, что:\n1. LM Studio запущен\n2. Локальный сервер включен (Server tab → Start Server)\n3. Модель загружена в LM Studio\n4. Бэкенд приложения запущен";
+      }
+      
+      const enhancedError = new Error(errorMessage);
+      if (error.stack) {
+        enhancedError.stack = error.stack;
+      }
+      throw enhancedError;
+    }
+    
     throw error;
   }
 }

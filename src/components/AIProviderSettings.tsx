@@ -9,6 +9,8 @@ interface AIProviderSettingsProps {
   currentProvider: AIProvider;
   onProviderChange: (provider: AIProvider) => void;
   onRefreshModels: () => void;
+  streamingEnabled: boolean;
+  onStreamingChange: (enabled: boolean) => void;
 }
 
 interface ProviderStatus {
@@ -26,7 +28,9 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
   onClose,
   currentProvider,
   onProviderChange,
-  onRefreshModels
+  onRefreshModels,
+  streamingEnabled,
+  onStreamingChange
 }) => {
   const [providerStatus, setProviderStatus] = useState<ProviderStatus>({
     ollama: 'checking',
@@ -247,6 +251,28 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
             >
               {currentProvider === 'lmstudio' ? 'Активно' : 'Выбрать LM Studio'}
             </button>
+          </div>
+
+          <div className="help-section">
+            <h4>Настройки общения с моделью:</h4>
+            <div className="streaming-setting">
+              <label className="streaming-toggle">
+                <input 
+                  type="checkbox" 
+                  checked={streamingEnabled}
+                  onChange={(e) => onStreamingChange(e.target.checked)}
+                />
+                <span className="toggle-slider"></span>
+                <span className="toggle-label">
+                  Потоковая передача ответов (Streaming)
+                </span>
+              </label>
+              <p className="streaming-description">
+                {streamingEnabled 
+                  ? 'Ответы модели будут появляться постепенно, слово за словом'
+                  : 'Ответы модели будут отображаться только после полной генерации'}
+              </p>
+            </div>
           </div>
 
           <div className="help-section">
