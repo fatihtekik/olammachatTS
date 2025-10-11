@@ -146,7 +146,7 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
     <div className="ai-provider-modal-overlay" onClick={onClose}>
       <div className="ai-provider-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>⚙️ Настройки AI Провайдера</h2>
+          <h2>Настройки AI Провайдера</h2>
           <button className="close-button" onClick={onClose}>✕</button>
         </div>
 
@@ -159,11 +159,11 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
           <div className={`provider-card ${currentProvider === 'ollama' ? 'active' : ''}`}>
             <div className="provider-header">
               <div className="provider-title">
-                <h3>🦙 Ollama</h3>
+                <h3>Ollama</h3>
                 <span className={`status-badge ${providerStatus.ollama}`}>
-                  {providerStatus.ollama === 'connected' ? '✓ Подключено' : 
-                   providerStatus.ollama === 'checking' ? '⏳ Проверка...' : 
-                   '✗ Не подключено'}
+                  {providerStatus.ollama === 'connected' ? 'Подключено' : 
+                   providerStatus.ollama === 'checking' ? 'Проверка...' : 
+                   'Не подключено'}
                 </span>
               </div>
               <button 
@@ -171,14 +171,14 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
                 onClick={checkOllamaStatus}
                 disabled={isChecking}
               >
-                🔄 Проверить
+                Проверить
               </button>
             </div>
             
             {providerStatus.ollama === 'connected' && (
               <div className="provider-details">
                 <p className="models-count">
-                  📦 Доступно моделей: {providerModels.ollama.length}
+                  Доступно моделей: {providerModels.ollama.length}
                 </p>
                 {providerModels.ollama.length > 0 && (
                   <div className="models-list">
@@ -198,7 +198,7 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
               onClick={() => handleProviderSelect('ollama')}
               disabled={providerStatus.ollama !== 'connected'}
             >
-              {currentProvider === 'ollama' ? '✓ Активно' : 'Выбрать Ollama'}
+              {currentProvider === 'ollama' ? 'Активно' : 'Выбрать Ollama'}
             </button>
           </div>
 
@@ -206,11 +206,11 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
           <div className={`provider-card ${currentProvider === 'lmstudio' ? 'active' : ''}`}>
             <div className="provider-header">
               <div className="provider-title">
-                <h3>🎨 LM Studio</h3>
+                <h3>LM Studio</h3>
                 <span className={`status-badge ${providerStatus.lmstudio}`}>
-                  {providerStatus.lmstudio === 'connected' ? '✓ Подключено' : 
-                   providerStatus.lmstudio === 'checking' ? '⏳ Проверка...' : 
-                   '✗ Не подключено'}
+                  {providerStatus.lmstudio === 'connected' ? 'Подключено' : 
+                   providerStatus.lmstudio === 'checking' ? 'Проверка...' : 
+                   'Не подключено'}
                 </span>
               </div>
               <button 
@@ -218,14 +218,14 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
                 onClick={checkLMStudioStatus}
                 disabled={isChecking}
               >
-                🔄 Проверить
+                Проверить
               </button>
             </div>
             
             {providerStatus.lmstudio === 'connected' && (
               <div className="provider-details">
                 <p className="models-count">
-                  📦 Доступно моделей: {providerModels.lmstudio.length}
+                  Доступно моделей: {providerModels.lmstudio.length}
                 </p>
                 {providerModels.lmstudio.length > 0 && (
                   <div className="models-list">
@@ -245,16 +245,17 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
               onClick={() => handleProviderSelect('lmstudio')}
               disabled={providerStatus.lmstudio !== 'connected'}
             >
-              {currentProvider === 'lmstudio' ? '✓ Активно' : 'Выбрать LM Studio'}
+              {currentProvider === 'lmstudio' ? 'Активно' : 'Выбрать LM Studio'}
             </button>
           </div>
 
           <div className="help-section">
-            <h4>💡 Подсказки:</h4>
+            <h4>Подсказки:</h4>
             <ul>
               <li><strong>Ollama:</strong> По умолчанию работает на порту 11434</li>
-              <li><strong>LM Studio:</strong> Запустите локальный сервер на порту 1234</li>
+              <li><strong>LM Studio:</strong> Запустите локальный сервер на порту 1234 (Server tab → Start Server)</li>
               <li>Убедитесь, что выбранный провайдер запущен перед использованием</li>
+              <li>В LM Studio загрузите модель перед запуском сервера</li>
             </ul>
           </div>
         </div>

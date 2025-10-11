@@ -51,39 +51,37 @@
 
 .settings-button {
   padding: 10px 14px;
-  border: 1px solid #d1d5db;
-  background: white;
-  color: #6b7280;
-  border-radius: 8px;
+  border: 2px solid #e5e7eb;
+  background: #ffffff;
+  color: #667eea;
+  border-radius: 10px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.2rem;
+  font-size: 1.3rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .settings-button:hover {
-  background: #f3f4f6;
-  color: #374151;
-  border-color: #9ca3af;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #ffffff;
+  border-color: #667eea;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.3);
+}
+
+.settings-button:active {
+  transform: translateY(0);
 }
 
 .settings-button i {
-  animation: rotate 2s ease-in-out infinite;
+  transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .settings-button:hover i {
-  animation: rotate 0.5s ease-in-out;
-}
-
-@keyframes rotate {
-  0%, 100% {
-    transform: rotate(0deg);
-  }
-  50% {
-    transform: rotate(180deg);
-  }
+  transform: rotate(90deg);
 }
 
 .session-button,

@@ -1,8 +1,9 @@
 """
-🤖 СЕРВИС ДЛЯ РАБОТЫ С LM STUDIO API
+СЕРВИС ДЛЯ РАБОТЫ С LM STUDIO API
 
 LM Studio использует OpenAI-совместимый API
-Стандартный адрес: http://localhost:1234/v1
+Стандартный адрес: http://localhost:1234
+API Endpoints: /v1/models, /v1/chat/completions, /v1/completions, /v1/embeddings
 """
 
 import httpx
@@ -15,12 +16,12 @@ logger = logging.getLogger(__name__)
 
 async def test_lm_studio_connection() -> bool:
     """
-    🔌 Проверяет, доступен ли LM Studio
+    Проверяет, доступен ли LM Studio
     """
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             # LM Studio использует /v1/models для проверки
-            response = await client.get(f"{settings.LM_STUDIO_API_URL}/models")
+            response = await client.get(f"{settings.LM_STUDIO_API_URL}/v1/models")
             return response.status_code == 200
     except Exception as e:
         logger.error(f"Ошибка подключения к LM Studio: {e}")
@@ -29,13 +30,13 @@ async def test_lm_studio_connection() -> bool:
 
 async def get_lm_studio_models() -> List[Dict[str, str]]:
     """
-    📋 Получает список доступных моделей из LM Studio
+    Получает список доступных моделей из LM Studio
     
     LM Studio возвращает модели в формате OpenAI API
     """
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{settings.LM_STUDIO_API_URL}/models")
+            response = await client.get(f"{settings.LM_STUDIO_API_URL}/v1/models")
             
             if response.status_code == 200:
                 data = response.json()
@@ -63,7 +64,7 @@ async def get_lm_studio_models() -> List[Dict[str, str]]:
 
 async def send_message_to_lm_studio(model: str, messages: List[Dict[str, str]]) -> str:
     """
-    💬 Отправляет сообщение в LM Studio и получает ответ
+    Отправляет сообщение в LM Studio и получает ответ
     
     Использует OpenAI-совместимый формат запроса
     """
@@ -79,7 +80,7 @@ async def send_message_to_lm_studio(model: str, messages: List[Dict[str, str]]) 
             }
             
             response = await client.post(
-                f"{settings.LM_STUDIO_API_URL}/chat/completions",
+                f"{settings.LM_STUDIO_API_URL}/v1/chat/completions",
                 json=payload
             )
             
