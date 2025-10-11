@@ -7,7 +7,12 @@ import LoadingIndicator from './LoadingIndicator';
 import UserProfile from './UserProfile';
 import AIProviderSettings, { AIProvider } from './AIProviderSettings';
 import { Message, ModelType, ChatSession, MatchData, TriggerResponse } from '../types/chat';
-import { getAvailableModels, testConnection } from '../services/ollamaApi';
+import { 
+  getAvailableModels, 
+  testConnection,
+  getCurrentProvider,
+  setCurrentProvider as setProviderInStorage 
+} from '../services/aiProviderApi';
 import './ChatPage.css';
 
 interface ChatPageProps {
@@ -70,34 +75,41 @@ const ChatPage: React.FC<ChatPageProps> = ({
   setShowSessions
 }) => {
   const [showProviderSettings, setShowProviderSettings] = useState(false);
-  const [currentProvider, setCurrentProvider] = useState<AIProvider>(
-    () => (localStorage.getItem('aiProvider') as AIProvider) || 'ollama'
-  );
+  const [currentProvider, setCurrentProvider] = useState<AIProvider>(getCurrentProvider);
 
-  // Сохраняем выбор провайдера
-  const handleProviderChange = (provider: AIProvider) => {
+  // Обновляем провайдера и перезагружаем модели
+  const handleProviderChange = async (provider: AIProvider) => {
     setCurrentProvider(provider);
-    localStorage.setItem('aiProvider', provider);
+    setProviderInStorage(provider);
+    await refreshModelsForProvider();
   };
 
   const refreshModelsForProvider = async () => {
     setConnectionStatus('checking');
     try {
-      // В зависимости от провайдера вызываем нужный API
       const isConnected = await testConnection();
       if (isConnected) {
         const freshModels = await getAvailableModels();
         setModels(freshModels);
         setConnectionStatus('connected');
-        if (freshModels.length > 0 && !freshModels.some(m => m.id === model)) {
-          setModel(freshModels[0].id);
+        
+        if (freshModels.length > 0) {
+          // Если текущая модель не в списке, выбираем первую
+          if (!freshModels.some(m => m.id === model)) {
+            setModel(freshModels[0].id);
+          }
+        } else {
+          const providerName = getCurrentProvider() === 'ollama' ? 'Ollama' : 'LM Studio';
+          alert(`Модели не найдены в ${providerName}. Пожалуйста, загрузите модели.`);
         }
       } else {
         setConnectionStatus('disconnected');
+        setModels([]);
       }
     } catch (error) {
       console.error('Error refreshing models:', error);
       setConnectionStatus('disconnected');
+      setModels([]);
     }
   };
 
@@ -173,35 +185,11 @@ const ChatPage: React.FC<ChatPageProps> = ({
               models={models}
               selectedModel={model} 
               onSelectModel={(newModel) => {
-                console.log('🎯 Пользователь выбрал модель:', newModel);
+                console.log('Пользователь выбрал модель:', newModel);
                 setModel(newModel);
               }}
               disabled={connectionStatus !== 'connected'}
-              onRefreshModels={async () => {
-                setConnectionStatus('checking');
-                try {
-                  const isConnected = await testConnection();
-                  if (isConnected) {
-                    const freshModels = await getAvailableModels();
-                    setModels(freshModels);
-                    setConnectionStatus('connected');
-                    if (freshModels.length === 0) {
-                      alert('Модели не найдены. Пожалуйста, выполните "ollama pull MODEL_NAME" для загрузки моделей.');
-                    } else {
-                      // Check if current model exists in the new model list
-                      const currentModelExists = freshModels.some(m => m.id === model);
-                      if (!currentModelExists && freshModels.length > 0) {
-                        setModel(freshModels[0].id);
-                      }
-                    }
-                  } else {
-                    setConnectionStatus('disconnected');
-                  }
-                } catch (error) {
-                  console.error('Error refreshing models:', error);
-                  setConnectionStatus('disconnected');
-                }
-              }}
+              onRefreshModels={refreshModelsForProvider}
             />
           </div>
           
