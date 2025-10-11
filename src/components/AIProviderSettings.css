@@ -87,9 +87,11 @@
   transform: rotate(90deg);
 }
 
-.modal-content {
-  padding: 30px;
-  background: #fafafa;
+.ai-provider-modal-overlay .modal-content {
+  padding: 30px !important;
+  width: 100% !important;
+  max-width: 800px !important;
+  background: #fafafa !important;
 }
 
 .provider-info {
