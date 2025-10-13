@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { analysisHistoryService } from '../services/analysisHistoryService';
+import { useInvalidateStats } from '../hooks/useDashboardStats';
 import './AnalysisPage.css';
 
 // === ТИПЫ ДАННЫХ ===
@@ -78,12 +81,13 @@ interface UploadResult {
 
 // === ОСНОВНОЙ КОМПОНЕНТ ===
 const AnalysisPage: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const invalidateStats = useInvalidateStats();
+  
   // === СОСТОЯНИЯ ===
-  const [analysisMode, setAnalysisMode] = useState<'upload' | 'database'>('upload');
   const [loading, setLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [modalOpen, setModalOpen] = useState<boolean>(false);
   const [selectedTrigger, setSelectedTrigger] = useState<Trigger | null>(null);
   const [singleTriggerAnalysis, setSingleTriggerAnalysis] = useState<string>('');
@@ -101,6 +105,11 @@ const AnalysisPage: React.FC = () => {
   // Состояния для панели настроек
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [matchesLimit, setMatchesLimit] = useState<number>(10); // Лимит матчей для анализа
+  const [aiAnalysisEnabled, setAiAnalysisEnabled] = useState<boolean>(true); // Включение/выключение AI анализа
+  const [selectedModel, setSelectedModel] = useState<string>(''); // Выбранная модель
+  const [availableModels, setAvailableModels] = useState<string[]>([]); // Доступные модели
+  const [isLoadingModels, setIsLoadingModels] = useState<boolean>(false); // Загрузка моделей
+  const [maxTokens, setMaxTokens] = useState<number>(2000); // Ограничение токенов
 
   // === КОНСТАНТЫ ===
   const triggerTypes: TriggerType[] = [
@@ -122,6 +131,9 @@ const AnalysisPage: React.FC = () => {
     // Загружаем сохранённые настройки из localStorage
     const savedProvider = localStorage.getItem('aiProvider') as 'ollama' | 'lmstudio';
     const savedMatchesLimit = localStorage.getItem('matchesLimit');
+    const savedAiAnalysisEnabled = localStorage.getItem('aiAnalysisEnabled');
+    const savedSelectedModel = localStorage.getItem('selectedModel');
+    const savedMaxTokens = localStorage.getItem('maxTokens');
     
     if (savedProvider) {
       setAiProvider(savedProvider);
@@ -129,7 +141,70 @@ const AnalysisPage: React.FC = () => {
     if (savedMatchesLimit) {
       setMatchesLimit(parseInt(savedMatchesLimit));
     }
+    if (savedAiAnalysisEnabled !== null) {
+      setAiAnalysisEnabled(savedAiAnalysisEnabled === 'true');
+    }
+    if (savedSelectedModel) {
+      setSelectedModel(savedSelectedModel);
+    }
+    if (savedMaxTokens) {
+      setMaxTokens(parseInt(savedMaxTokens));
+    }
   }, []);
+
+  // Загружаем историю анализа при переходе из Dashboard
+  useEffect(() => {
+    if (location.state?.analysisHistory) {
+      const history = location.state.analysisHistory;
+      console.log('📥 Загрузка истории анализа:', history);
+      
+      // Восстанавливаем результаты
+      setAnalysisResult({
+        period_start: history.periodStart,
+        period_end: history.periodEnd,
+        total_players: history.totalPlayers,
+        total_matches: history.totalMatches,
+        triggers_found: history.triggersFound,
+        triggers: history.triggers,
+        top_performers: [],
+        problem_players: []
+      });
+      
+      // Восстанавливаем настройки периода
+      if (history.periodStart) setPeriodStart(history.periodStart);
+      if (history.periodEnd) setPeriodEnd(history.periodEnd);
+      
+      // Восстанавливаем настройки AI
+      if (history.analysisSettings) {
+        if (history.analysisSettings.matchesLimit) {
+          setMatchesLimit(history.analysisSettings.matchesLimit);
+        }
+        if (history.analysisSettings.aiAnalysisEnabled !== undefined) {
+          setAiAnalysisEnabled(history.analysisSettings.aiAnalysisEnabled);
+        }
+        if (history.analysisSettings.selectedModel) {
+          setSelectedModel(history.analysisSettings.selectedModel);
+        }
+      }
+      
+      // Восстанавливаем провайдера AI
+      if (history.aiProvider) {
+        setAiProvider(history.aiProvider);
+      }
+      
+      setLoading(false);
+      
+      // Очищаем state после загрузки чтобы не загружать повторно
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
+
+  // Загружаем модели при изменении провайдера
+  useEffect(() => {
+    if (settingsOpen) {
+      loadAvailableModels(aiProvider);
+    }
+  }, [aiProvider, settingsOpen]);
 
   // === ОСНОВНЫЕ ФУНКЦИИ ===
   const initializePeriod = () => {
@@ -145,47 +220,94 @@ const AnalysisPage: React.FC = () => {
   const saveSettings = () => {
     localStorage.setItem('aiProvider', aiProvider);
     localStorage.setItem('matchesLimit', matchesLimit.toString());
+    localStorage.setItem('aiAnalysisEnabled', aiAnalysisEnabled.toString());
+    localStorage.setItem('selectedModel', selectedModel);
+    localStorage.setItem('maxTokens', maxTokens.toString());
     setSettingsOpen(false);
     alert('✅ Настройки сохранены!');
   };
 
-  // Загрузка Excel файла
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSelectedFile(e.target.files?.[0] || null);
-  };
-  
-  const uploadExcel = async () => {
-    if (!selectedFile) {
-      alert('Пожалуйста, выберите файл');
-      return;
-    }
-    
-    setLoading(true);
-    const formData = new FormData();
-    formData.append('file', selectedFile);
-    
+  // Загрузка доступных моделей
+  const loadAvailableModels = async (provider: 'ollama' | 'lmstudio') => {
+    setIsLoadingModels(true);
     try {
-      const response = await fetch('http://localhost:8000/api/v1/match-analysis/upload-excel', {
-        method: 'POST',
-        body: formData,
-      });
+      let url = '';
+      if (provider === 'ollama') {
+        url = 'http://localhost:11434/api/tags';
+      } else {
+        url = 'http://localhost:1234/v1/models';
+      }
+
+      console.log(`🔍 Загрузка моделей для ${provider} с ${url}`);
       
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
       if (!response.ok) {
-        const err = await response.json();
-        alert(`Ошибка загрузки: ${err.detail || response.statusText}`);
-        return;
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('📦 Получены модели:', data);
+
+      let models: string[] = [];
+      if (provider === 'ollama' && data.models) {
+        models = data.models.map((m: any) => m.name);
+      } else if (provider === 'lmstudio' && data.data) {
+        models = data.data.map((m: any) => m.id);
+      }
+
+      setAvailableModels(models);
+      
+      // Автоматически выбираем первую модель, если ничего не выбрано
+      if (models.length > 0 && !selectedModel) {
+        setSelectedModel(models[0]);
       }
       
-      const result = await response.json();
-      setUploadResult(result);
-      console.log('📁 Результат загрузки файла:', result);
-      console.log('🎯 Игроков в файле:', result.file_player_ids?.length || 0);
+      console.log('✅ Загружено моделей:', models.length);
     } catch (error) {
-  console.error('Error uploading Excel!!:', error);
-  alert('Ошибка при загрузке файла: ' + (error as Error).message);
-}
- finally {
-      setLoading(false);
+      console.error('❌ Ошибка загрузки моделей:', error);
+      alert(`Не удалось загрузить модели для ${provider}. Убедитесь, что сервер запущен.`);
+      setAvailableModels([]);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  // Тестовый запрос к модели
+  const testModel = async (provider: 'ollama' | 'lmstudio', model: string) => {
+    try {
+      let url = '';
+      let body = {};
+      
+      if (provider === 'ollama') {
+        url = 'http://localhost:11434/api/generate';
+        body = {
+          model: model,
+          prompt: 'Test',
+          stream: false
+        };
+      } else {
+        url = 'http://localhost:1234/v1/chat/completions';
+        body = {
+          model: model,
+          messages: [{ role: 'user', content: 'Test' }],
+          max_tokens: 10
+        };
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      return response.ok;
+    } catch (error) {
+      console.error('❌ Ошибка теста модели:', error);
+      return false;
     }
   };
 
@@ -196,19 +318,16 @@ const AnalysisPage: React.FC = () => {
       return;
     }
 
-    // Собираем player_ids из результата загрузки если есть
-    const playerIds = uploadResult?.file_player_ids && uploadResult.file_player_ids.length > 0
-      ? uploadResult.file_player_ids
-      : undefined;
-
     setLoading(true);
     try {
       const requestBody = {
         period_start: periodStart,
         period_end: periodEnd,
-        analyze_recent_upload_only: !playerIds, // если явно не передали список
-        player_ids: playerIds,
-        ai_provider: aiProvider  // Добавляем выбранный провайдер
+        analyze_recent_upload_only: false,
+        ai_provider: aiProvider,  // Добавляем выбранный провайдер
+        ai_analysis_enabled: aiAnalysisEnabled,  // Включение/выключение AI
+        selected_model: selectedModel,  // Выбранная модель
+        max_tokens: maxTokens  // Ограничение токенов
       };
 
       console.log('🚀 Отправка запроса на анализ:', {
@@ -228,6 +347,32 @@ const AnalysisPage: React.FC = () => {
         const result = await response.json();
         setAnalysisResult(result);
         console.log('🎯 Результат анализа:', result);
+
+        // Сохраняем результат в IndexedDB
+        try {
+          await analysisHistoryService.init();
+          await analysisHistoryService.saveAnalysis({
+            periodStart,
+            periodEnd,
+            totalPlayers: result.total_players || 0,
+            totalMatches: result.total_matches || 0,
+            triggersFound: result.triggers_found || 0,
+            triggers: result.triggers || [],
+            aiProvider,
+            analysisSettings: {
+              matchesLimit,
+              aiAnalysisEnabled,
+              selectedModel
+            }
+          });
+          console.log('✅ Analysis saved to IndexedDB');
+        } catch (dbError) {
+          console.error('❌ Failed to save to IndexedDB:', dbError);
+        }
+
+        // Инвалидируем кеш статистики дашборда
+        invalidateStats();
+
       } else {
         const error = await response.json();
         alert(`Ошибка анализа: ${error.detail}`);
@@ -238,12 +383,6 @@ const AnalysisPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  // После загрузки Excel, переходим к анализу
-  const handleAnalyzeAfterUpload = async () => {
-    setAnalysisMode('database');
-    await analyzeDatabase();
   };
 
   // === ФУНКЦИИ ДЛЯ РАБОТЫ С ТРИГГЕРАМИ ===
@@ -369,23 +508,10 @@ const AnalysisPage: React.FC = () => {
 
   return (
     <div className="analysis-page">
-      <div className="analysis-header">
-        <h1>Игроков анализ</h1>
-        <div className="header-controls">
-          <div className="mode-selector">
-            <button 
-              className={`mode-btn ${analysisMode === 'upload' ? 'active' : ''}`}
-              onClick={() => setAnalysisMode('upload')}
-            >
-              Загрузка Excel
-            </button>
-            <button 
-              className={`mode-btn ${analysisMode === 'database' ? 'active' : ''}`}
-              onClick={() => setAnalysisMode('database')}
-            >
-              Анализ базы данных
-            </button>
-          </div>
+      {/* Основной контент */}
+      <div className="analysis-content">
+        <div className="analysis-header">
+          <h2>Анализ базы данных</h2>
           <button 
             className="settings-btn"
             onClick={() => setSettingsOpen(true)}
@@ -394,82 +520,7 @@ const AnalysisPage: React.FC = () => {
             <i className="bi bi-gear-fill"></i>
           </button>
         </div>
-      </div>
 
-      {analysisMode === 'upload' ? (
-        <div className="upload-section">
-          <div className="upload-card">
-            <i className="bi bi-file-earmark-excel"></i>
-            <h3>Загрузить Excel файл</h3>
-            <p>Загрузите файл с матчами для анализа триггеров</p>
-            <div className="format-guide">
-              <h4>📋 Формат файла:</h4>
-              <p><strong>Обязательные столбцы:</strong> Дата, Игрок 1, Счёт, Игрок 2</p>
-              <p><strong>Для корректных рейтингов добавьте:</strong> Рейтинг игрок 1, Рейтинг игрок 2</p>
-              <p><strong>Дополнительно:</strong> Время, Стадия, Турнир</p>
-              <details>
-                <summary>Подробная инструкция</summary>
-                <div className="detailed-format">
-                  <p>Пример заполнения:</p>
-                  <table className="format-table">
-                    <thead>
-                      <tr>
-                        <th>Дата</th>
-                        <th>Игрок 1</th>
-                        <th>Счёт</th>
-                        <th>Игрок 2</th>
-                        <th>Рейтинг игрок 1</th>
-                        <th>Рейтинг игрок 2</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td>2024-01-15</td>
-                        <td>Иванов Иван</td>
-                        <td>3:1</td>
-                        <td>Петров Петр</td>
-                        <td>1250</td>
-                        <td>1180</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </details>
-            </div>
-            <input type="file" accept=".xlsx,.xls" onChange={handleFileChange} />
-            <button className="upload-btn" onClick={uploadExcel} disabled={!selectedFile || loading}>
-              <i className="bi bi-upload"></i>
-              {loading ? 'Загружаем...' : 'Загрузить'}
-            </button>
-            {uploadResult && (
-              <div className="upload-result">
-                <h4>📊 Результат загрузки:</h4>
-                <p>Всего строк: {uploadResult.total_processed}</p>
-                <p>Создано матчей: {uploadResult.created_matches}</p>
-                <p>Создано новых игроков: {uploadResult.created_players}</p>
-                <p>Пропущено дубликатов: {uploadResult.skipped_duplicates}</p>
-                {uploadResult.file_player_ids && (
-                  <p>🎯 Игроков в файле для анализа: <strong>{uploadResult.file_player_ids.length}</strong></p>
-                )}
-                {uploadResult.errors && uploadResult.errors.length > 0 && (
-                  <div>
-                    <p>Ошибки при загрузке:</p>
-                    <ul>
-                      {uploadResult.errors.map((err, idx) => (
-                        <li key={idx}>{err}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                <button className="analyze-btn" onClick={handleAnalyzeAfterUpload}>
-                  <i className="bi bi-search"></i>
-                  Анализировать загруженных игроков
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
         <div className="database-analysis-section">
           <div className="analysis-controls">
             <div className="control-group">
@@ -490,15 +541,6 @@ const AnalysisPage: React.FC = () => {
             </div>
 
             <div className="control-group">
-              <label>Анализ игроков:</label>
-              <p className="analysis-note">
-                ✅ Будут проанализированы <strong>ТОЛЬКО игроки из загруженного Excel файла</strong> за указанный период.
-                <br />
-                Игроки из базы данных, которых нет в файле, анализироваться не будут.
-              </p>
-            </div>
-
-            <div className="control-group">
               <label>AI провайдер:</label>
               <div className="provider-selector">
                 <button
@@ -506,19 +548,18 @@ const AnalysisPage: React.FC = () => {
                   onClick={() => setAiProvider('ollama')}
                   type="button"
                 >
-                  🟢 Ollama
+                  <span className="provider-indicator"></span>
+                  Ollama
                 </button>
                 <button
                   className={`provider-btn ${aiProvider === 'lmstudio' ? 'active' : ''}`}
                   onClick={() => setAiProvider('lmstudio')}
                   type="button"
                 >
-                  🔷 LM Studio
+                  <span className="provider-indicator"></span>
+                  LM Studio
                 </button>
               </div>
-              <p className="provider-note">
-                Выбранный провайдер: <strong>{aiProvider === 'ollama' ? 'Ollama' : 'LM Studio'}</strong>
-              </p>
             </div>
 
             <button 
@@ -698,12 +739,16 @@ const AnalysisPage: React.FC = () => {
                                 <p className="trigger-description">
                                   {mainTrigger.trigger_value}
                                 </p>
-                                {mainTrigger.ai_analysis && (
-                                  <div className="ai-analysis">
-                                    <p><strong>Анализ ИИ:</strong></p>
+                                <div className="ai-analysis">
+                                  <p><strong>Анализ ИИ:</strong></p>
+                                  {!aiAnalysisEnabled ? (
+                                    <p style={{ color: '#6b7280', fontStyle: 'italic' }}>Был отключен</p>
+                                  ) : mainTrigger.ai_analysis ? (
                                     <p>{mainTrigger.ai_analysis}</p>
-                                  </div>
-                                )}
+                                  ) : (
+                                    <p style={{ color: '#6b7280', fontStyle: 'italic' }}>Нет данных</p>
+                                  )}
+                                </div>
                               </div>
 
                               {mainTrigger.trigger_metadata && (
@@ -724,7 +769,6 @@ const AnalysisPage: React.FC = () => {
             </div>
           )}
         </div>
-      )}
 
       {/* Модальное окно для детального просмотра триггера */}
       {modalOpen && selectedTrigger && (
@@ -757,12 +801,16 @@ const AnalysisPage: React.FC = () => {
                   <p>{selectedTrigger.trigger_value}</p>
                 </div>
 
-                {selectedTrigger.ai_analysis && (
-                  <div className="modal-ai-analysis">
-                    <h5>Анализ ИИ:</h5>
+                <div className="modal-ai-analysis">
+                  <h5>Анализ ИИ:</h5>
+                  {!aiAnalysisEnabled ? (
+                    <p style={{ color: '#6b7280', fontStyle: 'italic' }}>Был отключен</p>
+                  ) : selectedTrigger.ai_analysis ? (
                     <p>{selectedTrigger.ai_analysis}</p>
-                  </div>
-                )}
+                  ) : (
+                    <p style={{ color: '#6b7280', fontStyle: 'italic' }}>Нет данных</p>
+                  )}
+                </div>
                 <div className="modal-ai-analysis">
                   <h5>Краткий анализ этого триггера:</h5>
                   {singleTriggerLoading ? (
@@ -793,76 +841,138 @@ const AnalysisPage: React.FC = () => {
             </div>
             
             <div className="modal-body settings-body">
-              {/* AI Провайдер */}
+              {/* Включение/выключение AI анализа */}
               <div className="setting-group">
                 <label className="setting-label">
-                  <i className="bi bi-robot"></i> AI Провайдер
+                  <i className="bi bi-lightbulb"></i> AI Анализ
                 </label>
-                <div className="provider-selector">
-                  <button
-                    className={`provider-btn ${aiProvider === 'lmstudio' ? 'active' : ''}`}
-                    onClick={() => setAiProvider('lmstudio')}
-                  >
-                    <i className="bi bi-server"></i>
-                    <span>LM Studio</span>
-                    {aiProvider === 'lmstudio' && <i className="bi bi-check-circle-fill"></i>}
-                  </button>
-                  <button
-                    className={`provider-btn ${aiProvider === 'ollama' ? 'active' : ''}`}
-                    onClick={() => setAiProvider('ollama')}
-                  >
-                    <i className="bi bi-terminal"></i>
-                    <span>Ollama</span>
-                    {aiProvider === 'ollama' && <i className="bi bi-check-circle-fill"></i>}
-                  </button>
-                </div>
-                <p className="setting-hint">
-                  {aiProvider === 'lmstudio' 
-                    ? '🔷 Использует LM Studio (localhost:1234)' 
-                    : '🟢 Использует Ollama (localhost:11434)'}
-                </p>
-              </div>
-
-              {/* Лимит матчей */}
-              <div className="setting-group">
-                <label className="setting-label">
-                  <i className="bi bi-list-ol"></i> Количество матчей для анализа
-                </label>
-                <div className="matches-limit-control">
-                  <input
-                    type="range"
-                    min="5"
-                    max="50"
-                    step="5"
-                    value={matchesLimit}
-                    onChange={(e) => setMatchesLimit(parseInt(e.target.value))}
-                    className="matches-slider"
-                  />
-                  <div className="matches-value">
+                <div className="toggle-container">
+                  <label className="toggle-switch">
                     <input
-                      type="number"
-                      min="5"
-                      max="50"
-                      value={matchesLimit}
-                      onChange={(e) => setMatchesLimit(Math.min(50, Math.max(5, parseInt(e.target.value) || 5)))}
-                      className="matches-input"
+                      type="checkbox"
+                      checked={aiAnalysisEnabled}
+                      onChange={(e) => setAiAnalysisEnabled(e.target.checked)}
                     />
-                    <span>матчей</span>
-                  </div>
+                    <span className="toggle-slider"></span>
+                  </label>
+                  <span className="toggle-label">
+                    {aiAnalysisEnabled ? 'Включен' : 'Выключен'}
+                  </span>
                 </div>
-                <p className="setting-hint">
-                  📊 AI будет анализировать последние {matchesLimit} матчей каждого игрока
-                </p>
+                {!aiAnalysisEnabled && (
+                  <p className="setting-hint warning">
+                    ⚠️ AI анализ отключен. В поле анализа будет отображаться: "Был отключен"
+                  </p>
+                )}
               </div>
 
-              {/* Информация */}
-              <div className="setting-info">
-                <i className="bi bi-info-circle"></i>
-                <p>
-                  Настройки сохраняются автоматически и будут использоваться для всех последующих анализов.
-                  Рекомендуется использовать LM Studio с 10-20 матчами для оптимального результата.
-                </p>
-              </div>
+              {/* AI Провайдер - показываем только если AI включен */}
+              {aiAnalysisEnabled && (
+                <>
+                  <div className="setting-group">
+                    <label className="setting-label">
+                      <i className="bi bi-robot"></i> AI Провайдер
+                    </label>
+                    <div className="provider-selector">
+                      <button
+                        className={`provider-btn ${aiProvider === 'lmstudio' ? 'active' : ''}`}
+                        onClick={() => setAiProvider('lmstudio')}
+                      >
+                        <i className="bi bi-server"></i>
+                        <span>LM Studio</span>
+                        {aiProvider === 'lmstudio' && <span className="provider-indicator"></span>}
+                      </button>
+                      <button
+                        className={`provider-btn ${aiProvider === 'ollama' ? 'active' : ''}`}
+                        onClick={() => setAiProvider('ollama')}
+                      >
+                        <i className="bi bi-terminal"></i>
+                        <span>Ollama</span>
+                        {aiProvider === 'ollama' && <span className="provider-indicator"></span>}
+                      </button>
+                    </div>
+                    <p className="setting-hint">
+                      {aiProvider === 'lmstudio' 
+                        ? '🔷 Использует LM Studio (localhost:1234)' 
+                        : '🟢 Использует Ollama (localhost:11434)'}
+                    </p>
+                  </div>
+
+                  {/* Выбор модели */}
+                  <div className="setting-group">
+                    <label className="setting-label">
+                      <i className="bi bi-cpu"></i> Модель анализа
+                    </label>
+                    {isLoadingModels ? (
+                      <div className="loading-models">
+                        <div className="spinner-small"></div>
+                        <span>Загрузка доступных моделей...</span>
+                      </div>
+                    ) : availableModels.length > 0 ? (
+                      <>
+                        <select
+                          value={selectedModel}
+                          onChange={(e) => setSelectedModel(e.target.value)}
+                          className="model-select"
+                        >
+                          {availableModels.map(model => (
+                            <option key={model} value={model}>{model}</option>
+                          ))}
+                        </select>
+                        <button
+                          className="test-model-btn"
+                          onClick={async () => {
+                            const result = await testModel(aiProvider, selectedModel);
+                            if (result) {
+                              alert('✅ Модель работает корректно!');
+                            } else {
+                              alert('❌ Модель не отвечает. Проверьте, что она загружена в ' + aiProvider);
+                            }
+                          }}
+                        >
+                          <i className="bi bi-play-circle"></i> Проверить модель
+                        </button>
+                      </>
+                    ) : (
+                      <p className="setting-hint error">
+                        ❌ Модели не найдены. Убедитесь, что {aiProvider === 'lmstudio' ? 'LM Studio' : 'Ollama'} запущен и модели загружены.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Ограничение токенов */}
+                  <div className="setting-group">
+                    <label className="setting-label">
+                      <i className="bi bi-hash"></i> Ограничение токенов
+                    </label>
+                    <div className="tokens-control">
+                      <input
+                        type="range"
+                        min="500"
+                        max="8000"
+                        step="100"
+                        value={maxTokens}
+                        onChange={(e) => setMaxTokens(parseInt(e.target.value))}
+                        className="tokens-slider"
+                      />
+                      <div className="tokens-value">
+                        <input
+                          type="number"
+                          min="500"
+                          max="8000"
+                          value={maxTokens}
+                          onChange={(e) => setMaxTokens(Math.min(8000, Math.max(500, parseInt(e.target.value) || 500)))}
+                          className="tokens-input"
+                        />
+                        <span>токенов</span>
+                      </div>
+                    </div>
+                    <p className="setting-hint">
+                      📊 Максимальное количество токенов для ответа AI (500-8000)
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="modal-footer">
@@ -876,6 +986,8 @@ const AnalysisPage: React.FC = () => {
           </div>
         </div>
       )}
+      
+      </div> {/* Закрываем analysis-content */}
     </div>
   );
 };

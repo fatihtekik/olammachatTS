@@ -20,6 +20,23 @@ export default defineConfig(async () => {
           changeOrigin: true,
         },
       },
+      watch: {
+        ignored: [
+          '**/backend/**',
+          '**/*.db',
+          '**/*.db-journal',
+          '**/*.db-wal',
+          '**/.env',
+          '**/.env.*',
+          '**/node_modules/**',
+          '**/.git/**',
+          '**/trigger_logs/**'
+        ],
+        usePolling: false
+      },
+      hmr: {
+        overlay: false
+      }
     },
     optimizeDeps: {
       exclude: ['@tailwindcss/vite']

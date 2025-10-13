@@ -27,8 +27,10 @@ class MatchAnalysisService:
         self.db = db
         self.last_uploaded_player_ids = []  # Инстансовый список ID игроков из последнего загруженного файла
 
-        # Добавляем функцию для ИИ-анализа
+        # Настройки AI анализа
         self._ai_analysis_enabled = True  # Флаг для включения/выключения ИИ
+        self._selected_model = None  # Выбранная модель
+        self._max_tokens = 2000  # Лимит токенов
 
         self.trigger_methods = {
             "top_performers": self._analyze_top_performers, 
@@ -97,10 +99,22 @@ class MatchAnalysisService:
                     # Парсим дату для проверки дубликата
                     match_date = self._parse_date(match_data.дата)
                     
-                    # Проверяем, не существует ли уже такой матч
-                    if self._match_exists(match_date, player1.id, player2.id, match_data.счёт, match_data.время):
+                    # Получаем SL-ID и Part iD для проверки дубликатов
+                    sl_id = match_data.sl_id if hasattr(match_data, 'sl_id') else None
+                    part_id = getattr(match_data, 'part_id', None)  # Пока нет в схеме
+                    
+                    # Проверяем, не существует ли уже такой матч (приоритет по SL-ID)
+                    if self._match_exists(
+                        sl_id=sl_id,
+                        part_id=part_id,
+                        date=match_date, 
+                        player1_id=player1.id, 
+                        player2_id=player2.id, 
+                        score=match_data.счёт, 
+                        time_str=match_data.время
+                    ):
                         skipped_duplicates += 1
-                        print(f"⏭️  Пропускаем дубликат: {match_data.игрок_1} vs {match_data.игрок_2} от {match_date} со счётом {match_data.счёт} со временем {match_data.время}")
+                        print(f"⏭️  Пропускаем дубликат: {match_data.игрок_1} vs {match_data.игрок_2} от {match_date}")
                         continue
                     
                     # Создаем матч
@@ -213,20 +227,15 @@ class MatchAnalysisService:
     async def _create_match_from_excel(self, data: ExcelMatchData, player1: Player, player2: Player) -> Match:
         """
         Создает матч из данных Excel и, при наличии, сохраняет построчно результаты сетов в MatchSet.
-        Ожидаемый формат data.счёт:
-        - "2:3"                  -> только общий счёт
-        - "2:3 (4-11 11-6 ...)"  -> общий счёт + результаты по сетам в скобках
-        Функция корректно обрабатывает разные разделители и пробелы/запятые.
+        Теперь также сохраняет эффективность подачи/приёма для каждого игрока в матче и сетах.
         """
 
         # 1) Парсим дату и время
         match_date = self._parse_date(data.дата)
-        # попытка использовать метод parse_time, если есть
         time_parser = getattr(self, "parse_time", None)
         if callable(time_parser):
             match_time = time_parser(data.время)
         else:
-            # если метода нет — попытка простого парсинга
             try:
                 from datetime import datetime
                 match_time = datetime.strptime(str(data.время), "%H:%M:%S").time() if data.время else None
@@ -235,33 +244,53 @@ class MatchAnalysisService:
 
         raw_score = str(data.счёт).strip() if data.счёт is not None else ""
 
-        # 2) Регекс: извлечь общий счёт (например 2:3 или 2-3) и содержимое скобок (пересчёт сетов)
-        # Поддерживаем формат: "2:3 (4-11 11-6)" или "2-3(4-11,11-6)" и т.п.
+        # 2) Регекс: извлечь общий счёт и содержимое скобок
         m = re.match(r'^\s*([0-9]+[\:\-][0-9]+)\s*(?:\((.*)\))?\s*$', raw_score)
         overall_part = None
         sets_part = None
         if m:
             overall_part = m.group(1)
-            sets_part = m.group(2)  # может быть None
+            sets_part = m.group(2)
         else:
-            # если не подошёл шаблон — попробуем взять целиком как общий счёт
             overall_part = raw_score
             sets_part = None
 
-        # Утилита — парсит пару "X:Y" или "X-Y" в ints
         def parse_pair(s):
             s = s.strip()
             sep = ':' if ':' in s else '-'
             left, right = s.split(sep)
             return int(left), int(right)
+        
+        def safe_int(val):
+            """Безопасное преобразование в int"""
+            if val is None or str(val).strip() == '':
+                return None
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return None
 
-        # 3) Парсим детальные сеты из sets_part, если есть
-        per_set_scores = []  # list of (p1_points, p2_points)
-        if sets_part:
-            # находим все вхождения "число[-–—]число" в скобочной части
+        # 3) Парсим детальные сеты из новых полей Excel или из sets_part
+        per_set_scores = []
+        
+        # Сначала пытаемся получить счета из отдельных колонок
+        for i in range(1, 6):  # Обрабатываем до 5 сетов
+            p1_score_field = getattr(data, f'счёт_{i}_сета_игрок_1', None)
+            p2_score_field = getattr(data, f'счёт_{i}_сета_игрок_2', None)
+            
+            p1_score = safe_int(p1_score_field)
+            p2_score = safe_int(p2_score_field)
+            
+            if p1_score is not None and p2_score is not None:
+                per_set_scores.append((p1_score, p2_score))
+        
+        if per_set_scores:
+            print(f"   🎾 Детальные сеты из колонок: {per_set_scores}")
+        
+        # Если не получили из колонок, пробуем из sets_part (старый метод)
+        if not per_set_scores and sets_part:
             found = re.findall(r'(\d+\s*[-–—]\s*\d+)', sets_part)
             for token in found:
-                # убираем пробелы вокруг дефиса и сплитим по любому типа дефиса
                 token_clean = token.strip()
                 parts = re.split(r'[-–—]', token_clean)
                 try:
@@ -269,40 +298,73 @@ class MatchAnalysisService:
                     p2 = int(parts[1].strip())
                     per_set_scores.append((p1, p2))
                 except Exception:
-                    # если парсинг конкретного сета не удался — пропускаем его
                     continue
+            if per_set_scores:
+                print(f"   🎾 Детальные сеты из sets_part: {per_set_scores}")
 
-        # 4) Если есть per_set_scores — подсчитываем sets_player1/sets_player2 по ним.
+        # 4) Подсчитываем sets_player1/sets_player2 из детальных сетов
         sets_player1 = None
         sets_player2 = None
-        if per_set_scores:
+        
+        # ПРИОРИТЕТ 1: Используем новые поля "Счет матча игрока 1/2" если есть
+        if hasattr(data, 'счет_матча_игрока_1') and data.счет_матча_игрока_1:
+            s1 = safe_int(data.счет_матча_игрока_1)
+            s2 = safe_int(data.счет_матча_игрока_2)
+            if s1 is not None and s2 is not None:
+                sets_player1 = s1
+                sets_player2 = s2
+                print(f"   📊 Счёт из новых колонок: {sets_player1}:{sets_player2}")
+        
+        # ПРИОРИТЕТ 2: Подсчитываем из детальных сетов
+        if sets_player1 is None and per_set_scores:
             sets_player1 = sum(1 for p1, p2 in per_set_scores if p1 > p2)
             sets_player2 = sum(1 for p1, p2 in per_set_scores if p2 > p1)
+            print(f"   📊 Подсчет из детальных сетов: {sets_player1}:{sets_player2} (из {len(per_set_scores)} сетов)")
 
-        # 5) Если per_set_scores отсутствуют или не дали корректный результат — используем общий результат
+        # ПРИОРИТЕТ 3: Если не удалось подсчитать, берём из общего счёта (старый формат)
         if sets_player1 is None or sets_player2 is None:
             try:
                 a, b = parse_pair(overall_part)
                 sets_player1, sets_player2 = a, b
-            except Exception:
-                # не удалось распарсить общий результат — ставим 0:0 и логируем
+                print(f"   📊 Счёт из overall_part (старый формат): {sets_player1}:{sets_player2}")
+            except Exception as e:
                 sets_player1, sets_player2 = 0, 0
-                print(f"⚠️ Не удалось распарсить общий счёт '{raw_score}' для строки Excel.")
+                print(f"⚠️ Не удалось распарсить общий счёт '{raw_score}': {e}")
 
-        # 6) Определяем победителя (если есть явный)
+        # 5) Определяем победителя по сетам
         if sets_player1 > sets_player2:
             winner_id = player1.id
+            print(f"   🏆 Победитель: {player1.full_name} ({sets_player1}:{sets_player2})")
         elif sets_player2 > sets_player1:
             winner_id = player2.id
+            print(f"   🏆 Победитель: {player2.full_name} ({sets_player1}:{sets_player2})")
         else:
-            winner_id = None  # ничья/ошибка — оставим None
+            winner_id = None
+            print(f"   ⚠️ Ничья или счёт 0:0")
 
-        # 7) Получаем/создаём лигу (как было)
+        # 6) Получаем/создаём лигу
         league = None
         if data.турнир:
             league = await self._get_or_create_league(data.турнир)
 
-        # 8) Создаём объект Match
+        # 7) Парсим эффективность подачи/приёма для матча
+        serve_eff_p1 = safe_int(data.эффективность_подачи_игрока_1_в_матче)
+        receive_eff_p1 = safe_int(data.эффективность_приёма_игрока_1_в_матче)
+        serve_eff_p2 = safe_int(data.эффективность_подачи_игрока_2_в_матче)
+        receive_eff_p2 = safe_int(data.эффективность_приёма_игрока_2_в_матче)
+        
+        # Парсим таймауты и карточки
+        timeouts_p1 = safe_int(data.таймауты_игрок_1)
+        timeouts_p2 = safe_int(data.таймауты_игрок_2)
+        yellow_p1 = safe_int(data.жёлтые_карточки_игрок_1)
+        yellow_p2 = safe_int(data.жёлтые_карточки_игрок_2)
+        red_p1 = safe_int(data.красные_карточки_игрок_1)
+        red_p2 = safe_int(data.красные_карточки_игрок_2)
+        
+        # Парсим баланс
+        game_balance = safe_int(data.балансы_в_игре)
+
+        # 8) Создаём объект Match с новыми полями
         match = Match(
             date=match_date,
             time=match_time,
@@ -316,26 +378,42 @@ class MatchAnalysisService:
             league_id=league.id if league else None,
             match_sl_id=int(data.sl_id) if data.sl_id else None,
             is_final=(bool(data.стадия) and "финал" in str(data.стадия).lower()),
-            is_semifinal=(bool(data.стадия) and "полуфинал" in str(data.стадия).lower())
+            is_semifinal=(bool(data.стадия) and "полуфинал" in str(data.стадия).lower()),
+            
+            # Новые поля эффективности
+            serve_efficiency_p1=serve_eff_p1,
+            receive_efficiency_p1=receive_eff_p1,
+            serve_efficiency_p2=serve_eff_p2,
+            receive_efficiency_p2=receive_eff_p2,
+            
+            # Время матча
+            match_duration_formatted=data.время_матча,
+            
+            # Таймауты и карточки
+            timeouts_p1=timeouts_p1,
+            timeouts_p2=timeouts_p2,
+            yellow_cards_p1=yellow_p1,
+            yellow_cards_p2=yellow_p2,
+            red_cards_p1=red_p1,
+            red_cards_p2=red_p2,
+            
+            # Баланс
+            game_balance=game_balance
         )
 
-        # 9) Проверяем дубликат и сохраняем матч + сеты в транзакции
+        # 9) Проверяем дубликат и сохраняем матч + сеты
         try:
-            # используем _match_exists как у тебя в коде (передавая те же параметры)
             if not self._match_exists(match_date, player1.id, player2.id, raw_score, data.время):
                 self.db.add(match)
-                # сначала flush, чтобы получить match.id (если используется автогенерация)
                 try:
                     self.db.flush()
                 except Exception:
-                    # если flush не доступен в сессии - сделаем commit+refresh как запасной вариант
                     self.db.commit()
                     self.db.refresh(match)
 
-                # если per_set_scores есть — сохраняем их в MatchSet
+                # Сохраняем сеты с эффективностью
                 if per_set_scores:
                     for i, (p1_pts, p2_pts) in enumerate(per_set_scores, start=1):
-                        # кто победил в сете
                         if p1_pts > p2_pts:
                             set_winner = player1.id
                         elif p2_pts > p1_pts:
@@ -343,21 +421,42 @@ class MatchAnalysisService:
                         else:
                             set_winner = None
 
+                        # Получаем эффективность для конкретного сета
+                        serve_eff_p1_set = safe_int(getattr(data, f'эффективность_подачи_игрока_1_в_{i}_сете', None))
+                        receive_eff_p1_set = safe_int(getattr(data, f'эффективность_приёма_игрока_1_в_{i}_сете', None))
+                        serve_eff_p2_set = safe_int(getattr(data, f'эффективность_подачи_игрока_2_в_{i}_сете', None))
+                        receive_eff_p2_set = safe_int(getattr(data, f'эффективность_приёма_игрока_2_в_{i}_сете', None))
+                        
+                        # Время сета
+                        set_time = getattr(data, f'время_{i}_сета', None)
+                        
+                        # Баланс сета
+                        set_balance = safe_int(getattr(data, f'баланс_в_{i}_сете', None))
+
                         match_set = MatchSet(
                             match_id=match.id,
                             set_number=i,
                             player1_points=p1_pts,
                             player2_points=p2_pts,
-                            winner_id=set_winner
+                            winner_id=set_winner,
+                            
+                            # Эффективность в сете
+                            serve_efficiency_p1=serve_eff_p1_set,
+                            receive_efficiency_p1=receive_eff_p1_set,
+                            serve_efficiency_p2=serve_eff_p2_set,
+                            receive_efficiency_p2=receive_eff_p2_set,
+                            
+                            # Время сета
+                            set_duration_formatted=set_time,
+                            
+                            # Баланс сета
+                            set_balance=set_balance
                         )
                         self.db.add(match_set)
 
-                # Финальный коммит
                 self.db.commit()
-                # Обновляем объект match из БД
                 self.db.refresh(match)
             else:
-                # дубликат — просто вернём существующий матч (если хочется, можно его загрузить)
                 existing = self.db.query(Match).filter(
                     Match.date == match_date,
                     ((Match.player1_id == player1.id) & (Match.player2_id == player2.id)) | ((Match.player1_id == player2.id) & (Match.player2_id == player1.id)),
@@ -367,7 +466,6 @@ class MatchAnalysisService:
                     match = existing
 
         except SQLAlchemyError as e:
-            # откатим транзакцию и вернём/запишем лог
             try:
                 self.db.rollback()
             except Exception:
@@ -471,6 +569,16 @@ class MatchAnalysisService:
     async def analyze_triggers(self, request: AnalysisRequest) -> AnalysisResponse:  #Работает
             """Выполняет анализ триггеров для игроков (новая версия, игрок-ориентированная)"""
             logger.info("🔍 Начинаем анализ триггеров...")
+
+            # Устанавливаем настройки AI из запроса
+            self._ai_analysis_enabled = getattr(request, 'ai_analysis_enabled', True)
+            self._selected_model = getattr(request, 'selected_model', None)
+            self._max_tokens = getattr(request, 'max_tokens', 2000)
+            
+            print(f"🤖 AI анализ: {'ВКЛЮЧЕН' if self._ai_analysis_enabled else 'ВЫКЛЮЧЕН'}")
+            if self._ai_analysis_enabled:
+                print(f"   📦 Модель: {self._selected_model or 'по умолчанию'}")
+                print(f"   🎯 Max токенов: {self._max_tokens}")
 
             # Определяем период анализа
             end_date = request.period_end or date.today()
@@ -1333,17 +1441,52 @@ class MatchAnalysisService:
         
         raise ValueError(f"Не удалось распарсить счёт: {score_str}")
         
-    def _match_exists(self, date: date, player1_id: int, player2_id: int, score: str, time_str: str) -> bool:
+    def _match_exists(self, sl_id: str = None, part_id: str = None, 
+                      date: date = None, player1_id: int = None, player2_id: int = None, 
+                      score: str = None, time_str: str = None) -> bool:
+        """
+        Проверяет существование матча в базе данных.
+        
+        ПРИОРИТЕТ 1: По уникальным ID из Excel (SL-ID или Part iD)
+        ПРИОРИТЕТ 2: По комбинации даты, игроков, времени и счета (для старых данных)
+        
+        Args:
+            sl_id: Уникальный ID матча из SL-ID
+            part_id: Уникальный ID матча из Part iD  
+            date: Дата матча
+            player1_id: ID первого игрока
+            player2_id: ID второго игрока
+            score: Счет матча
+            time_str: Время матча
+        """
         from datetime import datetime
+
+        # ПРИОРИТЕТ 1: Проверка по SL-ID (самый надежный способ)
+        if sl_id:
+            try:
+                sl_id_int = int(sl_id)
+                existing = self.db.query(Match).filter(Match.match_sl_id == sl_id_int).first()
+                if existing:
+                    print(f"   ⏭️  Найден дубликат по SL-ID: {sl_id}")
+                    return True
+            except (ValueError, TypeError):
+                pass
+        
+        # ПРИОРИТЕТ 2: Проверка по Part iD (если SL-ID нет)
+        # TODO: Добавить поле part_id в модель Match если нужно
+        
+        # ПРИОРИТЕТ 3: Проверка по комбинации параметров (fallback для старых данных без ID)
+        if not date or not player1_id or not player2_id:
+            return False
 
         # Преобразуем строку времени в datetime.time, если возможно
         try:
-            match_time = datetime.strptime(time_str.strip(), "%H:%M").time()
+            match_time = datetime.strptime(time_str.strip(), "%H:%M").time() if time_str else None
         except Exception:
             match_time = None
 
         # Нормализуем счёт (удаляем пробелы, стандартный формат через ':')
-        normalized_score = score.replace(" ", "").replace("-", ":").strip()
+        normalized_score = score.replace(" ", "").replace("-", ":").strip() if score else ""
 
         # Получаем все матчи на эту дату между этими игроками (любой порядок)
         potential_matches = self.db.query(Match).filter(
@@ -1365,6 +1508,7 @@ class MatchAnalysisService:
             score_match = normalized_score == match_score
 
             if time_match and score_match:
+                print(f"   ⏭️  Найден дубликат по дате/игрокам/времени/счету")
                 return True
 
         return False
@@ -2114,7 +2258,7 @@ class MatchAnalysisService:
         """Генерирует ИИ-анализ для игрока (поддерживает Ollama и LM Studio)"""
         if not self._ai_analysis_enabled:
             print(f"⚠️ AI-анализ отключен для игрока {player_name}")
-            return f"Анализ игрока {player_name}"
+            return None  # Возвращаем None вместо текста
         
         try:
             # Создаем контекст для ИИ
@@ -2122,6 +2266,8 @@ class MatchAnalysisService:
             print(f"🤖 Генерация AI-анализа")
             print(f"👤 Игрок: {player_name}")
             print(f"🎯 Провайдер: {provider}")
+            print(f"📦 Модель: {self._selected_model or 'по умолчанию'}")
+            print(f"🎯 Max токенов: {self._max_tokens}")
             print(f"{'='*60}\n")
             
             prompt = self._create_analysis_prompt(player_name, trigger_value, player_stats)
@@ -2136,29 +2282,37 @@ class MatchAnalysisService:
             if provider == "lmstudio":
                 # LM Studio использует OpenAI-совместимый API
                 api_url = f"{settings.LM_STUDIO_API_URL}/v1/chat/completions"
-                model = "llama3-8b"  # Будет использована загруженная модель в LM Studio
+                # Используем выбранную модель или дефолтную
+                model = self._selected_model or "llama3-8b"
                 logger.info(f"🔷 Используем LM Studio для AI-анализа: {api_url}")
                 print(f"🔷 API URL: {api_url}")
                 print(f"🔷 Модель: {model}")
             else:
                 # Ollama использует свой формат API
                 api_url = f"{settings.OLLAMA_API_URL}/api/chat"
-                model = "llama3.1:8b"
+                # Используем выбранную модель или дефолтную
+                model = self._selected_model or "llama3.1:8b"
                 logger.info(f"🟢 Используем Ollama для AI-анализа: {api_url}")
                 print(f"🟢 API URL: {api_url}")
                 print(f"🟢 Модель: {model}")
             
             # Отправляем запрос
             print(f"📤 Отправка запроса...")
+            request_data = {
+                "model": model,
+                "stream": True,
+                "messages": [
+                    {"role": "system", "content": "Ты аналитик по настольному теннису."},
+                    {"role": "user", "content": prompt}
+                ]
+            }
+            
+            # Добавляем max_tokens для LM Studio (OpenAI API)
+            if provider == "lmstudio":
+                request_data["max_tokens"] = self._max_tokens
+            
             async with httpx.AsyncClient(timeout=30.0) as client:
-                async with client.stream("POST", api_url, json={
-                    "model": model,
-                    "stream": True,
-                    "messages": [
-                        {"role": "system", "content": "Ты аналитик по настольному теннису."},
-                        {"role": "user", "content": prompt}
-                    ]
-                }) as response:
+                async with client.stream("POST", api_url, json=request_data) as response:
                     
                     # Проверяем статус ответа
                     print(f"📨 Статус ответа: {response.status_code}")

@@ -1,9 +1,10 @@
 .chat-message {
   margin: 12px 0;
   padding: 12px 15px;
-  border-radius: 15px;
+  border-radius: 12px;
   max-width: 80%;
   position: relative;
+  border: 1px solid var(--border-primary);
 }
 
 /* Адаптивные стили для чат-сообщений на больших экранах */
@@ -26,19 +27,23 @@
 }
 
 .chat-message.user {
-  background-color: #0d6efd;
+  background: linear-gradient(135deg, var(--orange-primary), var(--orange-hover));
   color: white;
   align-self: flex-end;
   margin-left: auto;
   border-bottom-right-radius: 5px;
+  border: none;
+  box-shadow: 0 4px 12px rgba(255, 107, 0, 0.2);
 }
 
 .chat-message.assistant {
-  background-color: #f5f5f5;
+  background-color: var(--bg-card);
+  color: var(--text-primary);
   align-self: flex-start;
   margin-right: auto;
   border-bottom-left-radius: 5px;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+  border-left: 3px solid var(--orange-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .message-header {
@@ -46,16 +51,17 @@
   justify-content: space-between;
   margin-bottom: 5px;
   font-size: 0.8rem;
-  color: rgba(0, 0, 0, 0.6);
+  color: var(--text-secondary);
 }
 
 .chat-message.user .message-header {
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .message-content {
   word-break: break-word;
   white-space: pre-wrap;
+  color: inherit;
 }
 
 .message-role {
@@ -68,9 +74,9 @@
 }
 
 .error-message {
-  background-color: rgba(220, 53, 69, 0.1) !important;
-  color: #dc3545 !important;
-  border-left: 3px solid #dc3545;
+  background-color: rgba(255, 51, 51, 0.15) !important;
+  color: var(--error) !important;
+  border-left: 3px solid var(--error) !important;
   white-space: pre-line;
 }
 
@@ -80,14 +86,15 @@
 
 .error-message pre,
 .error-message code {
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: var(--bg-tertiary);
   padding: 2px 4px;
-  border-radius: 3px;
+  border-radius: 4px;
   font-family: monospace;
   display: block;
   padding: 8px;
   margin: 8px 0;
   overflow-x: auto;
+  color: var(--text-primary);
 }
 
 /* Markdown стили для AI сообщений */
@@ -107,7 +114,7 @@
   margin-bottom: 8px;
   font-weight: 600;
   line-height: 1.25;
-  color: #1a1a1a;
+  color: var(--orange-primary);
 }
 
 .chat-message.assistant .message-content h1 { font-size: 1.8em; }
@@ -119,6 +126,7 @@
 .chat-message.assistant .message-content p {
   margin-bottom: 12px;
   margin-top: 0;
+  color: var(--text-primary);
 }
 
 /* Списки */
@@ -126,6 +134,7 @@
 .chat-message.assistant .message-content ol {
   margin: 8px 0;
   padding-left: 24px;
+  color: var(--text-primary);
 }
 
 .chat-message.assistant .message-content li {
@@ -134,24 +143,26 @@
 
 /* Инлайн код */
 .chat-message.assistant .message-content code {
-  background-color: rgba(27, 31, 35, 0.05);
+  background-color: var(--bg-tertiary);
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 4px;
   font-family: 'Courier New', Consolas, Monaco, monospace;
   font-size: 0.9em;
-  color: #e83e8c;
+  color: var(--orange-primary);
+  border: 1px solid var(--border-primary);
 }
 
 /* Блоки кода */
 .chat-message.assistant .message-content pre {
-  background-color: #282c34;
-  color: #abb2bf;
+  background-color: #1a1a1a;
+  color: #e0e0e0;
   padding: 12px;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow-x: auto;
   margin: 12px 0;
   font-size: 0.85em;
   line-height: 1.5;
+  border: 1px solid var(--border-primary);
 }
 
 .chat-message.assistant .message-content pre code {
@@ -159,16 +170,20 @@
   color: inherit;
   padding: 0;
   font-size: 1em;
+  border: none;
   display: block;
 }
 
 /* Цитаты */
 .chat-message.assistant .message-content blockquote {
-  border-left: 4px solid #ddd;
+  border-left: 4px solid var(--orange-primary);
   padding-left: 16px;
   margin: 12px 0;
-  color: #666;
+  color: var(--text-secondary);
   font-style: italic;
+  background-color: rgba(255, 107, 0, 0.05);
+  padding: 12px 16px;
+  border-radius: 4px;
 }
 
 /* Таблицы */
@@ -177,49 +192,57 @@
   width: 100%;
   margin: 12px 0;
   font-size: 0.9em;
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .chat-message.assistant .message-content th,
 .chat-message.assistant .message-content td {
-  border: 1px solid #ddd;
+  border: 1px solid var(--border-primary);
   padding: 8px 12px;
   text-align: left;
+  color: var(--text-primary);
 }
 
 .chat-message.assistant .message-content th {
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: var(--bg-tertiary);
   font-weight: 600;
+  color: var(--orange-primary);
 }
 
 .chat-message.assistant .message-content tr:nth-child(even) {
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: rgba(255, 107, 0, 0.03);
 }
 
 /* Ссылки */
 .chat-message.assistant .message-content a {
-  color: #0366d6;
+  color: var(--orange-primary);
   text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease;
 }
 
 .chat-message.assistant .message-content a:hover {
-  text-decoration: underline;
+  border-bottom-color: var(--orange-primary);
 }
 
 /* Жирный текст */
 .chat-message.assistant .message-content strong {
   font-weight: 600;
-  color: #1a1a1a;
+  color: var(--text-primary);
 }
 
 /* Курсив */
 .chat-message.assistant .message-content em {
   font-style: italic;
+  color: var(--text-secondary);
 }
 
 /* Горизонтальная линия */
 .chat-message.assistant .message-content hr {
   border: none;
-  border-top: 2px solid #e1e4e8;
+  border-top: 2px solid var(--border-primary);
   margin: 16px 0;
 }
 

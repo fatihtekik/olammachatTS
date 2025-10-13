@@ -3,7 +3,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import './App.css';
 import Sidebar from './components/Sidebar';
+import Dashboard from './components/Dashboard';
 import AnalysisPage from './components/AnalysisPage';
+import AnalysisHistory from './components/AnalysisHistory';
 import ChatPage from './components/ChatPage';
 import ExcelUploadPage from './components/ExcelUploadPage';
 import { Message, ModelType, ChatSession, FileAttachment, MatchData, TriggerResponse } from './types/chat';
@@ -595,7 +597,7 @@ function App() {
         <Sidebar />
         <main className="main-content">
           <Routes>
-            <Route path="/" element={<AnalysisPage />} />
+            <Route path="/" element={<Dashboard />} />
             <Route 
               path="/chat" 
               element={
@@ -631,7 +633,9 @@ function App() {
                 />
               } 
             />
-            <Route path="/analysis" element={<ExcelUploadPage />} />
+            <Route path="/upload" element={<ExcelUploadPage />} />
+            <Route path="/analysis" element={<AnalysisPage />} />
+            <Route path="/history" element={<AnalysisHistory />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

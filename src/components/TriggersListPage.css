@@ -1,6 +1,6 @@
 .triggers-list-page {
   min-height: 100vh;
-  background-color: #f8f9fa;
+  background-color: var(--bg-primary);
   padding: 2rem;
 }
 
@@ -11,67 +11,79 @@
 }
 
 .page-header h1 {
-  color: #7286B5;
+  color: var(--text-primary);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
+  background: linear-gradient(135deg, var(--orange-primary), var(--orange-hover));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .page-header p {
-  color: #6c757d;
+  color: var(--text-secondary);
   font-size: 1.1rem;
   margin-bottom: 1rem;
 }
 
 .refresh-button {
-  background-color: #28a745;
+  background: linear-gradient(135deg, #28a745, #20963d);
   color: white;
   border: none;
   padding: 0.5rem 1rem;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 0.9rem;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.2);
 }
 
 .refresh-button:hover:not(:disabled) {
-  background-color: #218838;
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(40, 167, 69, 0.3);
 }
 
 .refresh-button:disabled {
-  background-color: #6c757d;
+  background: var(--bg-tertiary);
+  color: var(--text-disabled);
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .ai-analysis-button {
-  background-color: #007bff;
+  background: linear-gradient(135deg, var(--orange-primary), var(--orange-hover));
   color: white;
   border: none;
   padding: 0.5rem 1rem;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 0.9rem;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
   margin-left: 0.5rem;
+  box-shadow: 0 4px 12px rgba(255, 107, 0, 0.2);
 }
 
 .ai-analysis-button:hover:not(:disabled) {
-  background-color: #0056b3;
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255, 107, 0, 0.3);
 }
 
 .ai-analysis-button:disabled {
-  background-color: #6c757d;
+  background: var(--bg-tertiary);
+  color: var(--text-disabled);
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 /* Загрузка */
@@ -87,11 +99,12 @@
 .loading-spinner {
   width: 50px;
   height: 50px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #7286B5;
+  border: 4px solid var(--bg-tertiary);
+  border-top: 4px solid var(--orange-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 1rem;
+  box-shadow: 0 4px 12px rgba(255, 107, 0, 0.3);
 }
 
 @keyframes spin {

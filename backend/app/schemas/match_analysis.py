@@ -50,15 +50,90 @@ class ExcelMatchData(BaseModel):
     дата: str
     время: Optional[str] = None
     игрок_1: str
-    счёт: str
+    рейтинг_игрок_1: Optional[str] = None
     игрок_2: str
+    рейтинг_игрок_2: Optional[str] = None
+    счёт: Optional[str] = None  # Старый формат (может отсутствовать)
+    
+    # НОВЫЙ ФОРМАТ: Счет матча по сетам
+    счет_матча_игрока_1: Optional[str] = None  # Количество выигранных сетов игроком 1
+    счет_матча_игрока_2: Optional[str] = None  # Количество выигранных сетов игроком 2
+    
     стадия: Optional[str] = None
     турнир: Optional[str] = None
     турнир_sl_id: Optional[str] = None
     sl_id: Optional[str] = None
     fon_id: Optional[str] = None
-    рейтинг_игрок_1: Optional[str] = None  # Добавляем поле для рейтинга игрока 1
-    рейтинг_игрок_2: Optional[str] = None  # Добавляем поле для рейтинга игрока 2
+    
+    # Счета по сетам (до 5 сетов)
+    счёт_1_сета_игрок_1: Optional[str] = None
+    счёт_1_сета_игрок_2: Optional[str] = None
+    счёт_2_сета_игрок_1: Optional[str] = None
+    счёт_2_сета_игрок_2: Optional[str] = None
+    счёт_3_сета_игрок_1: Optional[str] = None
+    счёт_3_сета_игрок_2: Optional[str] = None
+    счёт_4_сета_игрок_1: Optional[str] = None
+    счёт_4_сета_игрок_2: Optional[str] = None
+    счёт_5_сета_игрок_1: Optional[str] = None
+    счёт_5_сета_игрок_2: Optional[str] = None
+    
+    # Эффективность подачи и приёма игроков в матче
+    эффективность_подачи_игрока_1_в_матче: Optional[str] = None
+    эффективность_приёма_игрока_1_в_матче: Optional[str] = None
+    эффективность_подачи_игрока_2_в_матче: Optional[str] = None
+    эффективность_приёма_игрока_2_в_матче: Optional[str] = None
+    
+    # Эффективность подачи и приёма игроков в сетах
+    эффективность_подачи_игрока_1_в_1_сете: Optional[str] = None
+    эффективность_приёма_игрока_1_в_1_сете: Optional[str] = None
+    эффективность_подачи_игрока_2_в_1_сете: Optional[str] = None
+    эффективность_приёма_игрока_2_в_1_сете: Optional[str] = None
+    
+    эффективность_подачи_игрока_1_в_2_сете: Optional[str] = None
+    эффективность_приёма_игрока_1_в_2_сете: Optional[str] = None
+    эффективность_подачи_игрока_2_в_2_сете: Optional[str] = None
+    эффективность_приёма_игрока_2_в_2_сете: Optional[str] = None
+    
+    эффективность_подачи_игрока_1_в_3_сете: Optional[str] = None
+    эффективность_приёма_игрока_1_в_3_сете: Optional[str] = None
+    эффективность_подачи_игрока_2_в_3_сете: Optional[str] = None
+    эффективность_приёма_игрока_2_в_3_сете: Optional[str] = None
+    
+    эффективность_подачи_игрока_1_в_4_сете: Optional[str] = None
+    эффективность_приёма_игрока_1_в_4_сете: Optional[str] = None
+    эффективность_подачи_игрока_2_в_4_сете: Optional[str] = None
+    эффективность_приёма_игрока_2_в_4_сете: Optional[str] = None
+    
+    эффективность_подачи_игрока_1_в_5_сете: Optional[str] = None
+    эффективность_приёма_игрока_1_в_5_сете: Optional[str] = None
+    эффективность_подачи_игрока_2_в_5_сете: Optional[str] = None
+    эффективность_приёма_игрока_2_в_5_сете: Optional[str] = None
+    
+    # Время матча и сетов
+    время_матча: Optional[str] = None
+    время_1_сета: Optional[str] = None
+    время_2_сета: Optional[str] = None
+    время_3_сета: Optional[str] = None
+    время_4_сета: Optional[str] = None
+    время_5_сета: Optional[str] = None
+    
+    # Таймауты
+    таймауты_игрок_1: Optional[str] = None
+    таймауты_игрок_2: Optional[str] = None
+    
+    # Карточки
+    жёлтые_карточки_игрок_1: Optional[str] = None
+    жёлтые_карточки_игрок_2: Optional[str] = None
+    красные_карточки_игрок_1: Optional[str] = None
+    красные_карточки_игрок_2: Optional[str] = None
+    
+    # Балансы
+    балансы_в_игре: Optional[str] = None
+    баланс_в_1_сете: Optional[str] = None
+    баланс_в_2_сете: Optional[str] = None
+    баланс_в_3_сете: Optional[str] = None
+    баланс_в_4_сете: Optional[str] = None
+    баланс_в_5_сете: Optional[str] = None
 
 class PlayerStatsResponse(BaseModel):
     """Схема ответа со статистикой игрока"""
@@ -109,6 +184,9 @@ class AnalysisRequest(BaseModel):
     trigger_types: Optional[List[str]] = None
     analyze_recent_upload_only: bool = False  # Анализировать только игроков из последнего загруженного файла
     ai_provider: Optional[str] = "lmstudio"  # AI провайдер: "ollama" или "lmstudio" (по умолчанию LM Studio)
+    ai_analysis_enabled: bool = True  # Включение/выключение AI анализа
+    selected_model: Optional[str] = None  # Конкретная модель для анализа
+    max_tokens: Optional[int] = 2000  # Максимальное количество токенов для ответа AI
 
 class AnalysisResponse(BaseModel):
     """Схема ответа с результатами анализа"""

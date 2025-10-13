@@ -3,7 +3,7 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background-color: #fff;
+  background-color: var(--bg-secondary);
   overflow: hidden;
 }
 
@@ -12,30 +12,36 @@
   justify-content: space-between;
   align-items: center;
   padding: 12px 15px;
-  background-color: #e9ecef;
-  border-bottom: 1px solid #dee2e6;
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .sessions-header h3 {
   margin: 0;
   font-size: 16px;
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .new-session-button {
-  background-color: #28a745;
+  background: linear-gradient(135deg, #28a745, #20963d);
   color: white;
   border: none;
-  border-radius: 4px;
-  padding: 5px 10px;
+  border-radius: 8px;
+  padding: 6px 12px;
   font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 5px;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.2);
 }
 
 .new-session-button:hover {
-  background-color: #218838;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(40, 167, 69, 0.3);
 }
 
 .sessions-container {
@@ -46,7 +52,7 @@
 .no-sessions {
   padding: 20px;
   text-align: center;
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 .sessions-list {
@@ -60,18 +66,20 @@
   justify-content: space-between;
   align-items: center;
   padding: 12px 15px;
-  border-bottom: 1px solid #dee2e6;
+  border-bottom: 1px solid var(--border-primary);
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+  background-color: transparent;
 }
 
 .session-item:hover {
-  background-color: #e9ecef;
+  background-color: rgba(255, 107, 0, 0.08);
 }
 
 .session-item.active {
-  background-color: #cfe2ff;
-  border-left: 3px solid #0d6efd;
+  background-color: rgba(255, 107, 0, 0.15);
+  border-left: 3px solid var(--orange-primary);
+  box-shadow: inset 0 0 20px rgba(255, 107, 0, 0.1);
 }
 
 .session-info {
@@ -80,37 +88,44 @@
 }
 
 .session-title {
-  font-weight: bold;
+  font-weight: 600;
   margin-bottom: 4px;
   display: flex;
   align-items: center;
   gap: 5px;
+  color: var(--text-primary);
 }
 
 .session-meta {
   display: flex;
   gap: 10px;
   font-size: 12px;
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 .session-model {
-  background-color: #e2e3e5;
-  padding: 1px 6px;
+  background-color: rgba(255, 107, 0, 0.15);
+  color: var(--orange-primary);
+  padding: 2px 8px;
   border-radius: 10px;
+  border: 1px solid rgba(255, 107, 0, 0.3);
+  font-weight: 500;
 }
 
 .delete-session {
   background: none;
   border: none;
-  color: #dc3545;
+  color: var(--error);
   cursor: pointer;
   opacity: 0.6;
-  transition: opacity 0.2s;
+  transition: all 0.2s ease;
+  padding: 4px 8px;
+  border-radius: 4px;
 }
 
 .delete-session:hover {
   opacity: 1;
+  background-color: rgba(255, 51, 51, 0.1);
 }
 
 /* Адаптивные стили для списка сессий на больших экранах */

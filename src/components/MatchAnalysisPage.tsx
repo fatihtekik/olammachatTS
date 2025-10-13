@@ -240,20 +240,48 @@ const MatchAnalysisPage: React.FC = () => {
 
   return (
     <div className="match-analysis-page">
-      <div className="analysis-header">
-        <h1>
+      {/* Мини-навигация */}
+      <div className="mini-navigation">
+        <button className="nav-item" onClick={() => window.location.href = '/'}>
+          <i className="bi bi-chat-dots"></i>
+          <span>Чат</span>
+        </button>
+        <div className="nav-item active">
           <i className="bi bi-graph-up-arrow"></i>
-          Анализ матчей
-        </h1>
-        <p>Загрузите Excel файл с матчами для автоматического анализа и выявления паттернов</p>
+          <span>Анализ данных</span>
+        </div>
+        <div className="nav-item disabled">
+          <i className="bi bi-clock-history"></i>
+          <span>История анализов</span>
+        </div>
       </div>
+
+      {/* Основной контент */}
+      <div className="analysis-content">
+        {/* Tabs для переключения */}
+        <div className="analysis-tabs">
+          <button className="tab-button active">
+            <i className="bi bi-file-earmark-excel"></i>
+            Загрузка Excel
+          </button>
+          <button className="tab-button">
+            <i className="bi bi-database"></i>
+            Анализ базы данных
+          </button>
+        </div>
 
       {/* Секция загрузки файла */}
       <div className="upload-section">
-        <h2>
-          <i className="bi bi-cloud-upload"></i>
-          Загрузка данных
-        </h2>
+        <div className="section-header">
+          <h2>Загрузить Excel файл</h2>
+          <button className="settings-button" title="Настройки анализа">
+            <i className="bi bi-gear"></i>
+          </button>
+        </div>
+        
+        <p className="section-description">
+          Загрузите файл с данными матчей для автоматической обработки и выявления закономерностей
+        </p>
         
         <div className="upload-area">
           <input
@@ -276,11 +304,25 @@ const MatchAnalysisPage: React.FC = () => {
               </div>
             ) : (
               <div className="drop-message">
-                <i className="bi bi-cloud-upload"></i>
-                <p>Нажмите для выбора Excel файла</p>
-                <small>Поддерживаются форматы .xlsx и .xls</small>
+                <i className="bi bi-file-earmark-excel"></i>
+                <p>Загрузить Excel файл</p>
+                <small>Загрузите файл с матчами для анализа триггеров</small>
               </div>
             )}
+          </div>
+
+          <div className="format-info">
+            <i className="bi bi-info-circle"></i>
+            <div>
+              <strong>Формат файла:</strong>
+              <p><strong>Обязательные столбцы:</strong> Дата, Игрок 1, Счёт, Игрок 2, Рейтинг игрок 1, Рейтинг игрок 2</p>
+              <p><strong>Для корректных рейтингов добавьте:</strong> Рейтинг игрок 1, Рейтинг игрок 2</p>
+              <p><strong>Дополнительно:</strong> Время, Стадия, Турнир</p>
+              <a href="#" className="details-link">
+                <i className="bi bi-arrow-right"></i>
+                Подробная инструкция
+              </a>
+            </div>
           </div>
 
           <button 
@@ -291,12 +333,12 @@ const MatchAnalysisPage: React.FC = () => {
             {uploading ? (
               <>
                 <i className="bi bi-hourglass-split rotating"></i>
-                Загрузка...
+                Обработка данных...
               </>
             ) : (
               <>
                 <i className="bi bi-upload"></i>
-                Загрузить данные
+                Загрузить
               </>
             )}
           </button>
@@ -444,6 +486,8 @@ const MatchAnalysisPage: React.FC = () => {
           )}
         </div>
       )}
+      
+      </div> {/* Закрываем analysis-content */}
     </div>
   );
 };
