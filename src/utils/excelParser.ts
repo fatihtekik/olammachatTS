@@ -33,36 +33,52 @@ export const parseExcelFile = async (file: File): Promise<ExcelMatchData[]> => {
         
         // Конвертируем в JSON
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
-          console.log('Данные из Excel:', jsonData);
+        console.log('Данные из Excel:', jsonData);
+        
+        // Фильтруем пустые строки перед обработкой
+        const filteredData = jsonData.filter((row: any) => {
+          // Проверяем, есть ли хотя бы какие-то данные в строке
+          const hasData = Object.values(row).some(val => 
+            val !== undefined && val !== null && String(val).trim() !== ''
+          );
+          return hasData;
+        });
+        
+        console.log(`Отфильтровано ${jsonData.length - filteredData.length} пустых строк`);
         
         // Преобразуем данные в нужный формат
-        const matchesData: ExcelMatchData[] = jsonData.map((row: any, index: number) => {
-          // Попробуем разные варианты названий колонок
-          const getColumnValue = (possibleNames: string[]): any => {
-            for (const name of possibleNames) {
-              if (row[name] !== undefined && row[name] !== null && row[name] !== '') {
-                return row[name];
+        const matchesData: ExcelMatchData[] = filteredData
+          .map((row: any, index: number) => {
+            // Попробуем разные варианты названий колонок
+            const getColumnValue = (possibleNames: string[]): any => {
+              for (const name of possibleNames) {
+                const value = row[name];
+                if (value !== undefined && value !== null && String(value).trim() !== '') {
+                  return value;
+                }
               }
-            }
-            return '';
-          };
+              return '';
+            };
 
-          // Функция для извлечения имени и рейтинга из строки вида "Имя Фамилия Отчество rating: 123.45"
-          const parsePlayerData = (playerString: string): { name: string; rating: number } => {
-            if (!playerString) {
-              return { name: '', rating: 1000 };
-            }
-            
-            const ratingMatch = playerString.match(/rating:\s*(\d+(?:\.\d+)?)/);
-            const rating = ratingMatch ? parseFloat(ratingMatch[1]) : 1000;
-            
-            // Убираем "rating: XXX.XX" из строки чтобы получить только имя
-            const name = playerString.replace(/\s*rating:\s*\d+(?:\.\d+)?/, '').trim();
-            
-            return { name: name || `Игрок (строка ${index + 1})`, rating };
-          };
+            // Функция для извлечения имени и рейтинга из строки вида "Имя Фамилия Отчество rating: 123.45"
+            const parsePlayerData = (playerString: string): { name: string; rating: number } => {
+              if (!playerString || String(playerString).trim() === '') {
+                return { name: '', rating: 1000 };
+              }
+              
+              const str = String(playerString).trim();
+              const ratingMatch = str.match(/rating:\s*(\d+(?:\.\d+)?)/);
+              const rating = ratingMatch ? parseFloat(ratingMatch[1]) : 1000;
+              
+              // Убираем "rating: XXX.XX" из строки чтобы получить только имя
+              // Также нормализуем пробелы внутри имени
+              let name = str.replace(/\s*rating:\s*\d+(?:\.\d+)?/, '').trim();
+              name = name.replace(/\s+/g, ' '); // Заменяем множественные пробелы одним
+              
+              return { name: name || '', rating };
+            };
 
-          // Получаем данные игроков
+            // Получаем данные игроков
           const player1String = String(getColumnValue([
             'Игрок 1', 'игрок 1', 'Игрок1', 'игрок1', 'Player 1', 'player 1'
           ]) || '');
@@ -101,9 +117,21 @@ export const parseExcelFile = async (file: File): Promise<ExcelMatchData[]> => {
             турнир: tournament,
             лига: league
           };
+        })
+        .filter(match => {
+          // Фильтруем матчи с пустыми или слишком короткими именами игроков
+          const hasValidPlayers = 
+            match.игрок_1 && match.игрок_1.length >= 2 &&
+            match.игрок_2 && match.игрок_2.length >= 2;
+          
+          // Проверяем, что игроки разные
+          const differentPlayers = match.игрок_1 !== match.игрок_2;
+          
+          return hasValidPlayers && differentPlayers;
         });
 
         console.log('Обработанные данные матчей:', matchesData);
+        console.log(`Итого валидных матчей: ${matchesData.length}`);
         resolve(matchesData);
         
       } catch (error) {

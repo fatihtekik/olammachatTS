@@ -75,6 +75,16 @@ class MatchAnalysisService:
             
             for idx, match_data in enumerate(excel_data):
                 try:
+                    # Пропускаем строки с пустыми критически важными данными
+                    if not match_data.игрок_1 or not match_data.игрок_2 or not match_data.дата:
+                        print(f"⏭️  Пропускаем строку {idx + 1}: отсутствуют критические данные (игроки или дата)")
+                        continue
+                    
+                    # Пропускаем строки где имена игроков слишком короткие (вероятно, мусор)
+                    if len(match_data.игрок_1.strip()) < 2 or len(match_data.игрок_2.strip()) < 2:
+                        print(f"⏭️  Пропускаем строку {idx + 1}: слишком короткие имена игроков")
+                        continue
+                    
                     print(f"📝 Обрабатываем строку {idx + 1}: {match_data.игрок_1} vs {match_data.игрок_2}")
                     
                     # Получаем или создаем игроков
@@ -155,6 +165,9 @@ class MatchAnalysisService:
     
     async def _get_or_create_player(self, player_name: str, rating_str: Optional[str] = None) -> tuple[Player, bool]:
         """Получает существующего игрока или создает нового с рейтингом"""
+        # Нормализуем имя игрока: убираем лишние пробелы по краям и внутри
+        player_name = ' '.join(player_name.strip().split())
+        
         # Извлекаем рейтинг из отдельного поля или из имени игрока
         rating = 1000  # значение по умолчанию
         
@@ -1485,8 +1498,24 @@ class MatchAnalysisService:
         except Exception:
             match_time = None
 
-        # Нормализуем счёт (удаляем пробелы, стандартный формат через ':')
-        normalized_score = score.replace(" ", "").replace("-", ":").strip() if score else ""
+        # Нормализуем счёт (удаляем все пробелы, заменяем дефисы на двоеточия, 
+        # убираем возможные дополнительные символы)
+        def normalize_score(s: str) -> str:
+            if not s:
+                return ""
+            # Убираем все пробелы
+            s = s.replace(" ", "")
+            # Заменяем дефисы на двоеточия
+            s = s.replace("-", ":")
+            # Убираем возможные лишние символы в начале и конце
+            s = s.strip()
+            # Если в счёте есть детали сетов в скобках, берем только основной счет
+            # Например: "3:1 (11-9, 11-7, 9-11, 11-5)" -> "3:1"
+            if "(" in s:
+                s = s.split("(")[0].strip()
+            return s
+        
+        normalized_score = normalize_score(score)
 
         # Получаем все матчи на эту дату между этими игроками (любой порядок)
         potential_matches = self.db.query(Match).filter(
@@ -1501,10 +1530,32 @@ class MatchAnalysisService:
 
         # Проверяем каждый матч на совпадение времени и счёта
         for m in potential_matches:
-            match_score = (m.score or "").replace(" ", "").replace("-", ":").strip()
+            # Нормализуем счет из базы данных так же, как и входной
+            def normalize_score(s: str) -> str:
+                if not s:
+                    return ""
+                s = s.replace(" ", "")
+                s = s.replace("-", ":")
+                s = s.strip()
+                if "(" in s:
+                    s = s.split("(")[0].strip()
+                return s
+            
+            match_score = normalize_score(m.score or "")
             match_time_db = m.time
 
-            time_match = True if match_time is None or match_time_db is None else match_time == match_time_db
+            # Улучшенная логика проверки времени:
+            # - Если оба времени известны, они должны совпадать
+            # - Если хотя бы одно время неизвестно, проверяем только счёт
+            #   (так как на одну дату могут быть несколько матчей между одними игроками с разными счетами)
+            if match_time is not None and match_time_db is not None:
+                # Оба времени известны - они должны совпадать
+                time_match = match_time == match_time_db
+            else:
+                # Хотя бы одно время неизвестно - считаем, что время совпадает,
+                # но дубликат определяется только по счёту
+                time_match = True
+            
             score_match = normalized_score == match_score
 
             if time_match and score_match:
