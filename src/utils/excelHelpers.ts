@@ -41,7 +41,7 @@ export const validateExcelStructure = (data: any[]): { isValid: boolean; errors:
   for (const [field, variants] of Object.entries(fieldVariants)) {
     const hasField = variants.some(variant => 
       availableFields.some(available => 
-        available.toLowerCase().includes(variant.toLowerCase())
+        available.toLowerCase() === variant.toLowerCase()
       )
     );
     

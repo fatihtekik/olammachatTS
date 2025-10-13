@@ -36,71 +36,91 @@ export const parseExcelFile = async (file: File): Promise<ExcelMatchData[]> => {
           console.log('Данные из Excel:', jsonData);
         
         // Преобразуем данные в нужный формат
-        const matchesData: ExcelMatchData[] = jsonData.map((row: any, index: number) => {
+        const matchesData: ExcelMatchData[] = jsonData
+          .map((row: any, index: number) => {
           // Попробуем разные варианты названий колонок
           const getColumnValue = (possibleNames: string[]): any => {
             for (const name of possibleNames) {
-              if (row[name] !== undefined && row[name] !== null && row[name] !== '') {
-                return row[name];
+              const value = row[name];
+              // Проверяем, что значение существует и не пустое после trim
+              if (value !== undefined && value !== null) {
+                const stringValue = String(value).trim();
+                if (stringValue !== '') {
+                  return stringValue;
+                }
               }
             }
-            return '';
+            return null;
           };
 
           // Функция для извлечения имени и рейтинга из строки вида "Имя Фамилия Отчество rating: 123.45"
-          const parsePlayerData = (playerString: string): { name: string; rating: number } => {
-            if (!playerString) {
+          const parsePlayerData = (playerString: string | null): { name: string; rating: number } => {
+            if (!playerString || playerString.trim() === '') {
               return { name: '', rating: 1000 };
             }
             
-            const ratingMatch = playerString.match(/rating:\s*(\d+(?:\.\d+)?)/);
+            // Trim для удаления лишних пробелов
+            playerString = playerString.trim();
+            
+            const ratingMatch = playerString.match(/rating:\s*(\d+(?:\.\d+)?)/i);
             const rating = ratingMatch ? parseFloat(ratingMatch[1]) : 1000;
             
             // Убираем "rating: XXX.XX" из строки чтобы получить только имя
-            const name = playerString.replace(/\s*rating:\s*\d+(?:\.\d+)?/, '').trim();
+            const name = playerString.replace(/\s*rating:\s*\d+(?:\.\d+)?/i, '').trim();
             
-            return { name: name || `Игрок (строка ${index + 1})`, rating };
+            return { name: name || '', rating };
           };
 
           // Получаем данные игроков
-          const player1String = String(getColumnValue([
+          const player1String = getColumnValue([
             'Игрок 1', 'игрок 1', 'Игрок1', 'игрок1', 'Player 1', 'player 1'
-          ]) || '');
+          ]);
           
-          const player2String = String(getColumnValue([
+          const player2String = getColumnValue([
             'Игрок 2', 'игрок 2', 'Игрок2', 'игрок2', 'Player 2', 'player 2'
-          ]) || '');
+          ]);
 
           const player1Data = parsePlayerData(player1String);
           const player2Data = parsePlayerData(player2String);
 
           // Получаем информацию о турнире и лиге из колонки "Турнир"
-          const tournamentString = String(getColumnValue([
+          const tournamentString = getColumnValue([
             'Турнир', 'турнир', 'Tournament', 'tournament'
-          ]) || 'Неизвестно');
+          ]) || 'Неизвестно';
           
           // Пытаемся извлечь турнир и лигу из строки вида "Турнир А5. Лига 450-500"
           const tournamentMatch = tournamentString.match(/^(.*?)\.\s*Лига\s*(.*?)$/);
           const tournament = tournamentMatch ? tournamentMatch[1].trim() : tournamentString;
           const league = tournamentMatch ? `Лига ${tournamentMatch[2].trim()}` : 'Неизвестно';
 
+          // Получаем счет с trim
+          const score = (getColumnValue([
+            'Счёт', 'счёт', 'Счет', 'счет', 'Score', 'score'
+          ]) || '0-0').trim();
+
+          // Получаем этап с trim
+          const stage = (getColumnValue([
+            'Стадия', 'стадия', 'Этап', 'этап', 'Stage', 'stage'
+          ]) || 'Неизвестно').trim();
+
           return {
             игрок_1: player1Data.name,
             игрок_2: player2Data.name,
             рейтинг_1: player1Data.rating,
             рейтинг_2: player2Data.rating,
-            
-            счёт: String(getColumnValue([
-              'Счёт', 'счёт', 'Счет', 'счет', 'Score', 'score'
-            ]) || '0-0'),
-            
-            этап: String(getColumnValue([
-              'Стадия', 'стадия', 'Этап', 'этап', 'Stage', 'stage'
-            ]) || 'Неизвестно'),
-            
+            счёт: score,
+            этап: stage,
             турнир: tournament,
             лига: league
           };
+        })
+        .filter((match) => {
+          // Фильтруем матчи с пустыми именами игроков
+          if (!match.игрок_1 || !match.игрок_2) {
+            console.warn('Пропущен матч с пустым именем игрока:', match);
+            return false;
+          }
+          return true;
         });
 
         console.log('Обработанные данные матчей:', matchesData);
