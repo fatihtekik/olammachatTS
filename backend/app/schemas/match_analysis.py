@@ -108,6 +108,7 @@ class AnalysisRequest(BaseModel):
     player_ids: Optional[List[str]] = None
     trigger_types: Optional[List[str]] = None
     analyze_recent_upload_only: bool = False  # Анализировать только игроков из последнего загруженного файла
+    ai_provider: Optional[str] = "lmstudio"  # AI провайдер: "ollama" или "lmstudio" (по умолчанию LM Studio)
 
 class AnalysisResponse(BaseModel):
     """Схема ответа с результатами анализа"""

@@ -548,7 +548,10 @@ class MatchAnalysisService:
             total_matches = len(all_matches)
             top_performers = await self._get_top_performers(start_date, end_date)
             problem_players = await self._get_problem_players(start_date, end_date)
-            triggers = await self._get_all_triggers(start_date, end_date)
+            
+            # Передаём провайдер из request (если указан, иначе lmstudio)
+            provider = getattr(request, 'ai_provider', 'lmstudio')
+            triggers = await self._get_all_triggers(start_date, end_date, provider=provider)
 
             response = AnalysisResponse(
                 period_start=start_date,
@@ -760,7 +763,7 @@ class MatchAnalysisService:
         
         return problem_players
     
-    async def _get_all_triggers(self, start_date: date, end_date: date) -> List[dict]:
+    async def _get_all_triggers(self, start_date: date, end_date: date, provider: str = "lmstudio") -> List[dict]:
         """
         Получает все триггеры за период.
         Генерирует персональный ИИ-анализ **один раз на игрока**, объединяя все триггеры (лимит 8).
@@ -790,7 +793,8 @@ class MatchAnalysisService:
             ai_text = await self._generate_ai_analysis(
                 player.full_name if player else "Неизвестный игрок",
                 trigger_values_combined,
-                player_stats
+                player_stats,
+                provider=provider  # Передаём провайдер
             )
 
             # Добавляем каждый триггер в результат, но AI-анализ общий для игрока
@@ -2106,47 +2110,181 @@ class MatchAnalysisService:
             "recent_matches": recent_matches
         }
 
-    async def _generate_ai_analysis(self, player_name: str, trigger_value: str ,  player_stats: Dict) -> str:
-        """Генерирует ИИ-анализ для игрока"""
+    async def _generate_ai_analysis(self, player_name: str, trigger_value: str ,  player_stats: Dict, provider: str = "lmstudio") -> str:
+        """Генерирует ИИ-анализ для игрока (поддерживает Ollama и LM Studio)"""
         if not self._ai_analysis_enabled:
+            print(f"⚠️ AI-анализ отключен для игрока {player_name}")
             return f"Анализ игрока {player_name}"
         
         try:
             # Создаем контекст для ИИ
+            print(f"\n{'='*60}")
+            print(f"🤖 Генерация AI-анализа")
+            print(f"👤 Игрок: {player_name}")
+            print(f"🎯 Провайдер: {provider}")
+            print(f"{'='*60}\n")
+            
             prompt = self._create_analysis_prompt(player_name, trigger_value, player_stats)
             
-            # Вызываем функцию стриминга из ollama_service
+            # Определяем провайдера и модель из settings
+            from app.core.config import settings
+            
+            # Используем переданный провайдер (или lmstudio по умолчанию)
+            provider = provider or "lmstudio"
+            logger.info(f"🎯 AI-анализ: провайдер={provider}, игрок={player_name}")
+            
+            if provider == "lmstudio":
+                # LM Studio использует OpenAI-совместимый API
+                api_url = f"{settings.LM_STUDIO_API_URL}/v1/chat/completions"
+                model = "llama3-8b"  # Будет использована загруженная модель в LM Studio
+                logger.info(f"🔷 Используем LM Studio для AI-анализа: {api_url}")
+                print(f"🔷 API URL: {api_url}")
+                print(f"🔷 Модель: {model}")
+            else:
+                # Ollama использует свой формат API
+                api_url = f"{settings.OLLAMA_API_URL}/api/chat"
+                model = "llama3.1:8b"
+                logger.info(f"🟢 Используем Ollama для AI-анализа: {api_url}")
+                print(f"🟢 API URL: {api_url}")
+                print(f"🟢 Модель: {model}")
+            
+            # Отправляем запрос
+            print(f"📤 Отправка запроса...")
             async with httpx.AsyncClient(timeout=30.0) as client:
-                print("AHAHAHHAHAHAHAHA")
-                async with client.stream("POST", "http://localhost:11434/api/chat", json={
-                    "model": "llama3.1:8b",  # ← ИЗМЕНИТЕ НА ВАШУ МОДЕЛЬ
+                async with client.stream("POST", api_url, json={
+                    "model": model,
                     "stream": True,
                     "messages": [
                         {"role": "system", "content": "Ты аналитик по настольному теннису."},
                         {"role": "user", "content": prompt}
                     ]
                 }) as response:
+                    
+                    # Проверяем статус ответа
+                    print(f"📨 Статус ответа: {response.status_code}")
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        error_msg = f"HTTP {response.status_code}: {error_text[:200]}"
+                        logger.error(f"❌ {error_msg}")
+                        print(f"❌ Ошибка: {error_msg}")
+                        return f"Ошибка {provider}: {error_msg}"
+                    
+                    print(f"✅ Соединение установлено, получаем ответ...")
                     analysis_text = ""
+                    chunk_count = 0
+                    error_count = 0
+                    first_raw_line_shown = False
+                    
                     async for line in response.aiter_lines():
                         if not line.strip():
                             continue
+                        
+                        # Показываем первую сырую строку для диагностики
+                        if not first_raw_line_shown:
+                            print(f"🔍 Первая строка от сервера (длина {len(line)}):")
+                            print(f"   [{line[:200]}...]" if len(line) > 200 else f"   [{line}]")
+                            first_raw_line_shown = True
+                        
+                        # LM Studio отправляет в формате SSE с префиксом "data: "
+                        if line.startswith("data: "):
+                            line = line[6:]  # Убираем "data: " (6 символов)
+                        
+                        # Пропускаем маркер окончания SSE
+                        if line.strip() == "[DONE]":
+                            print(f"🏁 Получен маркер окончания [DONE]")
+                            break
+                        
                         try:
                             data = json.loads(line)
+                            chunk_count += 1
+                            
+                            # Ollama формат: {"message": {"content": "..."}}
                             if "message" in data and "content" in data["message"]:
-                                analysis_text += data["message"]["content"]
-                        except json.JSONDecodeError:
+                                chunk = data["message"]["content"]
+                                analysis_text += chunk
+                                if chunk_count == 1 or chunk_count % 20 == 0:
+                                    print(f"📥 Получено чанков: {chunk_count}, длина: {len(analysis_text)}")
+                            
+                            # LM Studio (OpenAI) формат: {"choices": [{"delta": {"content": "..."}}]}
+                            elif "choices" in data and len(data["choices"]) > 0:
+                                delta = data["choices"][0].get("delta", {})
+                                
+                                # LM Studio может отправлять content или reasoning
+                                chunk = delta.get("content", "") or delta.get("reasoning", "")
+                                
+                                if chunk:  # Добавляем только если есть текст
+                                    analysis_text += chunk
+                                    if chunk_count == 1 or chunk_count % 20 == 0:
+                                        print(f"📥 Получено чанков: {chunk_count}, длина: {len(analysis_text)}")
+                            
+                            # Показываем структуру первого JSON для диагностики        
+                            elif chunk_count <= 2:  # Показываем первые 2 неожиданных
+                                print(f"⚠️ Неожиданная структура JSON (чанк #{chunk_count}):")
+                                print(f"   Ключи: {list(data.keys())}")
+                                if "choices" in data and len(data["choices"]) > 0:
+                                    delta = data["choices"][0].get("delta", {})
+                                    print(f"   delta ключи: {list(delta.keys())}")
+                                print(f"   Данные: {str(data)[:300]}")
+                                    
+                        except json.JSONDecodeError as json_err:
+                            error_count += 1
+                            if error_count <= 3:  # Показываем первые 3 ошибки
+                                print(f"⚠️ Ошибка JSON #{error_count}: {json_err}")
+                                print(f"   Строка (первые 100 символов): [{line[:100]}]")
                             continue
                     
-                    return analysis_text if analysis_text.strip() else f"Анализ триггера для игрока {player_name}"
+                    print(f"\n✅ Анализ завершен!")
+                    print(f"📊 Всего чанков: {chunk_count}")
+                    print(f"⚠️ Ошибок JSON: {error_count}")
+                    print(f"📏 Длина текста: {len(analysis_text)} символов")
+                    print(f"{'='*60}\n")
                     
+                    if analysis_text.strip():
+                        return analysis_text
+                    else:
+                        logger.warning(f"⚠️ Пустой ответ от {provider}")
+                        print(f"⚠️ ВНИМАНИЕ: Получен пустой ответ!")
+                        print(f"   Возможные причины:")
+                        print(f"   1. Сервер вернул не JSON (проверьте строку выше)")
+                        print(f"   2. Неправильный формат ответа")
+                        print(f"   3. Модель не загружена")
+                        return f"Модель не вернула анализ для {player_name}"
+                    
+        except httpx.TimeoutException as timeout_err:
+            error_msg = f"Таймаут подключения к {provider} (30 сек)"
+            logger.error(f"⏱️ {error_msg}: {timeout_err}")
+            print(f"⏱️ {error_msg}")
+            return f"⏱️ {error_msg}. Проверьте что сервер запущен."
+            
+        except httpx.ConnectError as conn_err:
+            error_msg = f"Не удалось подключиться к {provider}"
+            logger.error(f"🔌 {error_msg}: {conn_err}")
+            print(f"🔌 {error_msg}")
+            print(f"🔌 Проверьте:")
+            print(f"   - Запущен ли {provider}?")
+            print(f"   - Правильный ли URL: {api_url if 'api_url' in locals() else 'N/A'}?")
+            return f"🔌 {error_msg}. Запустите сервер."
+            
         except Exception as e:
-            print(f"Ошибка генерации ИИ-анализа: {e}")
-            return f"Не удалось сгенерировать анализ для триггера"
+            logger.error(f"💥 Неожиданная ошибка: {e}", exc_info=True)
+            print(f"💥 КРИТИЧЕСКАЯ ОШИБКА:")
+            print(f"   Тип: {type(e).__name__}")
+            print(f"   Сообщение: {str(e)}")
+            import traceback
+            print(f"   Трейс:\n{traceback.format_exc()}")
+            return f"💥 Ошибка: {str(e)}"
     
     def _create_analysis_prompt(self, player_name: str, trigger_value: str, player_stats: Dict) -> str:
         """Создает промпт для ИИ-анализа"""
-        embeddings, metadata = load_data()
-        dop_infa = search(trigger_value, embeddings, metadata, top_k=3)
+        # Пытаемся загрузить RAG данные, если не получается - продолжаем без них
+        dop_infa = []
+        try:
+            embeddings, metadata = load_data()
+            dop_infa = search(trigger_value, embeddings, metadata, top_k=3)
+            print(f"✅ RAG: Найдено {len(dop_infa)} релевантных фрагментов")
+        except Exception as e:
+            print(f"⚠️ RAG недоступен, продолжаем без базы знаний: {e}")
+            # Продолжаем работу без RAG
         # sorted_triggers = sorted(player_triggers, key=lambda t: t.severity_level or 0, reverse=True)[:8]
         # trigger_texts = "\n".join([f"- {t.trigger_type}: {t.trigger_value}" for t in sorted_triggers])
         # # Описания триггеров
@@ -2173,6 +2311,17 @@ class MatchAnalysisService:
         matches = player_stats.get('matches_played', 0)
         recent_form = player_stats.get('recent_form', '')
         
+        # Формируем промпт с RAG или без
+        rag_section = ""
+        if dop_infa:
+            rag_texts = [item["text"] for item in dop_infa]
+            rag_section = f"""
+Дополнительная информация из базы знаний:
+{chr(10).join(rag_texts)}
+"""
+        else:
+            rag_section = "(База знаний недоступна)"
+        
         prompt = f"""
 Игрок: {player_name}
 
@@ -2185,12 +2334,14 @@ class MatchAnalysisService:
 Обнаруженные триггеры:
 {trigger_value}
 
-Дополнительная информация из базы знаний:
-{chr(10).join([item["text"] for item in dop_infa])}
+{rag_section}
 
 Сделай профессиональный анализ игрока в 2-3 предложениях: объясни возможные причины проблем и дай рекомендации.
 """
-        print("Промпты которые летят в олламу 🏃🏃🏃🏃🏃🏃🏃", prompt)
+        print("🚀 Промпт для AI-анализа:")
+        print("=" * 60)
+        print(prompt)
+        print("=" * 60)
         
         return prompt
 

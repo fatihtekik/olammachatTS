@@ -260,6 +260,51 @@
   margin-top: 10px;
 }
 
+/* AI Provider Selector Styles */
+.provider-selector {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.provider-btn {
+  flex: 1;
+  padding: 12px 20px;
+  border: 2px solid #e0e0e0;
+  background: white;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.provider-btn:hover {
+  border-color: #667eea;
+  background: #f8f9ff;
+}
+
+.provider-btn.active {
+  border-color: #667eea;
+  background: #667eea;
+  color: white;
+}
+
+.provider-note {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #666;
+  font-style: italic;
+}
+
+.provider-note strong {
+  color: #667eea;
+}
+
 .analyze-btn {
   background: #28a745;
   color: white;
@@ -1242,4 +1287,289 @@
 .no-data {
   color: #999;
   font-style: italic;
+}
+
+/* === НАСТРОЙКИ === */
+.header-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.settings-btn {
+  padding: 12px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 6px rgba(102, 126, 234, 0.3);
+}
+
+.settings-btn i {
+  font-size: 1.5rem;
+  color: white;
+  transition: transform 0.3s ease;
+}
+
+.settings-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(102, 126, 234, 0.4);
+}
+
+.settings-btn:hover i {
+  transform: rotate(90deg);
+}
+
+.settings-modal {
+  max-width: 600px;
+  width: 90%;
+}
+
+.settings-body {
+  padding: 30px;
+}
+
+.setting-group {
+  margin-bottom: 30px;
+  padding-bottom: 25px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.setting-group:last-of-type {
+  border-bottom: none;
+}
+
+.setting-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 15px;
+}
+
+.setting-label i {
+  color: #667eea;
+  font-size: 1.3rem;
+}
+
+.setting-hint {
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: #666;
+  font-style: italic;
+}
+
+/* Селектор провайдера */
+.provider-selector {
+  display: flex;
+  gap: 15px;
+}
+
+.provider-btn {
+  flex: 1;
+  padding: 20px;
+  border: 2px solid #e9ecef;
+  background: white;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+}
+
+.provider-btn i:first-child {
+  font-size: 2rem;
+  color: #667eea;
+}
+
+.provider-btn span {
+  font-weight: 600;
+  color: #333;
+}
+
+.provider-btn.active {
+  border-color: #667eea;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+}
+
+.provider-btn.active i.bi-check-circle-fill {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  color: #28a745;
+  font-size: 1.2rem;
+}
+
+.provider-btn:hover {
+  border-color: #667eea;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+}
+
+/* Контроль лимита матчей */
+.matches-limit-control {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.matches-slider {
+  width: 100%;
+  height: 8px;
+  border-radius: 5px;
+  background: linear-gradient(to right, #667eea 0%, #764ba2 100%);
+  outline: none;
+  -webkit-appearance: none;
+}
+
+.matches-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: white;
+  border: 3px solid #667eea;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+}
+
+.matches-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 3px 10px rgba(102, 126, 234, 0.4);
+}
+
+.matches-slider::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: white;
+  border: 3px solid #667eea;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+}
+
+.matches-slider::-moz-range-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 3px 10px rgba(102, 126, 234, 0.4);
+}
+
+.matches-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.matches-input {
+  width: 80px;
+  padding: 10px 15px;
+  border: 2px solid #e9ecef;
+  border-radius: 8px;
+  font-size: 1.2rem;
+  font-weight: 600;
+  text-align: center;
+  color: #667eea;
+  transition: all 0.3s ease;
+}
+
+.matches-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.matches-value span {
+  font-size: 1rem;
+  color: #666;
+  font-weight: 500;
+}
+
+/* Информационный блок */
+.setting-info {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+  border-left: 4px solid #667eea;
+  border-radius: 8px;
+  padding: 20px;
+  display: flex;
+  gap: 15px;
+  align-items: flex-start;
+}
+
+.setting-info i {
+  font-size: 1.5rem;
+  color: #667eea;
+  margin-top: 2px;
+}
+
+.setting-info p {
+  margin: 0;
+  color: #555;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+/* Футер модалки */
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 20px 30px;
+  border-top: 1px solid #e9ecef;
+  background: #f8f9fa;
+  border-radius: 0 0 12px 12px;
+}
+
+.btn-cancel, .btn-save {
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-cancel {
+  background: white;
+  border: 2px solid #dc3545;
+  color: #dc3545;
+}
+
+.btn-cancel:hover {
+  background: #dc3545;
+  color: white;
+}
+
+.btn-save {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  border: none;
+  color: white;
+  box-shadow: 0 4px 6px rgba(40, 167, 69, 0.3);
+}
+
+.btn-save:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(40, 167, 69, 0.4);
+}
+
+.btn-save i {
+  font-size: 1.2rem;
 }

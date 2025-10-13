@@ -96,6 +96,11 @@ const AnalysisPage: React.FC = () => {
   const [triggerFilter, setTriggerFilter] = useState<string>('');
   const [sortBy, setSortBy] = useState<'name' | 'rating' | 'triggers' | 'severity'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [aiProvider, setAiProvider] = useState<'ollama' | 'lmstudio'>('lmstudio'); // AI провайдер (по умолчанию LM Studio)
+  
+  // Состояния для панели настроек
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [matchesLimit, setMatchesLimit] = useState<number>(10); // Лимит матчей для анализа
 
   // === КОНСТАНТЫ ===
   const triggerTypes: TriggerType[] = [
@@ -114,6 +119,16 @@ const AnalysisPage: React.FC = () => {
   // === ИНИЦИАЛИЗАЦИЯ ===
   useEffect(() => {
     initializePeriod();
+    // Загружаем сохранённые настройки из localStorage
+    const savedProvider = localStorage.getItem('aiProvider') as 'ollama' | 'lmstudio';
+    const savedMatchesLimit = localStorage.getItem('matchesLimit');
+    
+    if (savedProvider) {
+      setAiProvider(savedProvider);
+    }
+    if (savedMatchesLimit) {
+      setMatchesLimit(parseInt(savedMatchesLimit));
+    }
   }, []);
 
   // === ОСНОВНЫЕ ФУНКЦИИ ===
@@ -124,6 +139,14 @@ const AnalysisPage: React.FC = () => {
     
     setPeriodEnd(endDate.toISOString().split('T')[0]);
     setPeriodStart(startDate.toISOString().split('T')[0]);
+  };
+  
+  // Сохранение настроек
+  const saveSettings = () => {
+    localStorage.setItem('aiProvider', aiProvider);
+    localStorage.setItem('matchesLimit', matchesLimit.toString());
+    setSettingsOpen(false);
+    alert('✅ Настройки сохранены!');
   };
 
   // Загрузка Excel файла
@@ -184,8 +207,14 @@ const AnalysisPage: React.FC = () => {
         period_start: periodStart,
         period_end: periodEnd,
         analyze_recent_upload_only: !playerIds, // если явно не передали список
-        player_ids: playerIds
+        player_ids: playerIds,
+        ai_provider: aiProvider  // Добавляем выбранный провайдер
       };
+
+      console.log('🚀 Отправка запроса на анализ:', {
+        ...requestBody,
+        ai_provider: aiProvider
+      });
 
       const response = await fetch('http://localhost:8000/api/v1/match-analysis/analyze-database', {
         method: 'POST',
@@ -342,18 +371,27 @@ const AnalysisPage: React.FC = () => {
     <div className="analysis-page">
       <div className="analysis-header">
         <h1>Игроков анализ</h1>
-        <div className="mode-selector">
+        <div className="header-controls">
+          <div className="mode-selector">
+            <button 
+              className={`mode-btn ${analysisMode === 'upload' ? 'active' : ''}`}
+              onClick={() => setAnalysisMode('upload')}
+            >
+              Загрузка Excel
+            </button>
+            <button 
+              className={`mode-btn ${analysisMode === 'database' ? 'active' : ''}`}
+              onClick={() => setAnalysisMode('database')}
+            >
+              Анализ базы данных
+            </button>
+          </div>
           <button 
-            className={`mode-btn ${analysisMode === 'upload' ? 'active' : ''}`}
-            onClick={() => setAnalysisMode('upload')}
+            className="settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="Настройки анализа"
           >
-            Загрузка Excel
-          </button>
-          <button 
-            className={`mode-btn ${analysisMode === 'database' ? 'active' : ''}`}
-            onClick={() => setAnalysisMode('database')}
-          >
-            Анализ базы данных
+            <i className="bi bi-gear-fill"></i>
           </button>
         </div>
       </div>
@@ -457,6 +495,29 @@ const AnalysisPage: React.FC = () => {
                 ✅ Будут проанализированы <strong>ТОЛЬКО игроки из загруженного Excel файла</strong> за указанный период.
                 <br />
                 Игроки из базы данных, которых нет в файле, анализироваться не будут.
+              </p>
+            </div>
+
+            <div className="control-group">
+              <label>AI провайдер:</label>
+              <div className="provider-selector">
+                <button
+                  className={`provider-btn ${aiProvider === 'ollama' ? 'active' : ''}`}
+                  onClick={() => setAiProvider('ollama')}
+                  type="button"
+                >
+                  🟢 Ollama
+                </button>
+                <button
+                  className={`provider-btn ${aiProvider === 'lmstudio' ? 'active' : ''}`}
+                  onClick={() => setAiProvider('lmstudio')}
+                  type="button"
+                >
+                  🔷 LM Studio
+                </button>
+              </div>
+              <p className="provider-note">
+                Выбранный провайдер: <strong>{aiProvider === 'ollama' ? 'Ollama' : 'LM Studio'}</strong>
               </p>
             </div>
 
@@ -717,6 +778,100 @@ const AnalysisPage: React.FC = () => {
                   <p><strong>Создано:</strong> {formatDate(selectedTrigger.created_at)}</p>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Модальное окно настроек */}
+      {settingsOpen && (
+        <div className="modal-overlay" onClick={() => setSettingsOpen(false)}>
+          <div className="modal-content settings-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3><i className="bi bi-gear-fill"></i> Настройки анализа</h3>
+              <button className="modal-close" onClick={() => setSettingsOpen(false)}>×</button>
+            </div>
+            
+            <div className="modal-body settings-body">
+              {/* AI Провайдер */}
+              <div className="setting-group">
+                <label className="setting-label">
+                  <i className="bi bi-robot"></i> AI Провайдер
+                </label>
+                <div className="provider-selector">
+                  <button
+                    className={`provider-btn ${aiProvider === 'lmstudio' ? 'active' : ''}`}
+                    onClick={() => setAiProvider('lmstudio')}
+                  >
+                    <i className="bi bi-server"></i>
+                    <span>LM Studio</span>
+                    {aiProvider === 'lmstudio' && <i className="bi bi-check-circle-fill"></i>}
+                  </button>
+                  <button
+                    className={`provider-btn ${aiProvider === 'ollama' ? 'active' : ''}`}
+                    onClick={() => setAiProvider('ollama')}
+                  >
+                    <i className="bi bi-terminal"></i>
+                    <span>Ollama</span>
+                    {aiProvider === 'ollama' && <i className="bi bi-check-circle-fill"></i>}
+                  </button>
+                </div>
+                <p className="setting-hint">
+                  {aiProvider === 'lmstudio' 
+                    ? '🔷 Использует LM Studio (localhost:1234)' 
+                    : '🟢 Использует Ollama (localhost:11434)'}
+                </p>
+              </div>
+
+              {/* Лимит матчей */}
+              <div className="setting-group">
+                <label className="setting-label">
+                  <i className="bi bi-list-ol"></i> Количество матчей для анализа
+                </label>
+                <div className="matches-limit-control">
+                  <input
+                    type="range"
+                    min="5"
+                    max="50"
+                    step="5"
+                    value={matchesLimit}
+                    onChange={(e) => setMatchesLimit(parseInt(e.target.value))}
+                    className="matches-slider"
+                  />
+                  <div className="matches-value">
+                    <input
+                      type="number"
+                      min="5"
+                      max="50"
+                      value={matchesLimit}
+                      onChange={(e) => setMatchesLimit(Math.min(50, Math.max(5, parseInt(e.target.value) || 5)))}
+                      className="matches-input"
+                    />
+                    <span>матчей</span>
+                  </div>
+                </div>
+                <p className="setting-hint">
+                  📊 AI будет анализировать последние {matchesLimit} матчей каждого игрока
+                </p>
+              </div>
+
+              {/* Информация */}
+              <div className="setting-info">
+                <i className="bi bi-info-circle"></i>
+                <p>
+                  Настройки сохраняются автоматически и будут использоваться для всех последующих анализов.
+                  Рекомендуется использовать LM Studio с 10-20 матчами для оптимального результата.
+                </p>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn-cancel" onClick={() => setSettingsOpen(false)}>
+                Отмена
+              </button>
+              <button className="btn-save" onClick={saveSettings}>
+                <i className="bi bi-check-lg"></i> Сохранить
+              </button>
             </div>
           </div>
         </div>
