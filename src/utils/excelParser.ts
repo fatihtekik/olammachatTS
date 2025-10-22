@@ -35,8 +35,11 @@ export const parseExcelFile = async (file: File): Promise<ExcelMatchData[]> => {
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
           console.log('Данные из Excel:', jsonData);
         
-        // Преобразуем данные в нужный формат
-        const matchesData: ExcelMatchData[] = jsonData.map((row: any, index: number) => {
+        // Преобразуем данные в нужный формат с валидацией
+        const matchesData: ExcelMatchData[] = [];
+        let skippedRows = 0;
+        
+        jsonData.forEach((row: any, index: number) => {
           // Попробуем разные варианты названий колонок
           const getColumnValue = (possibleNames: string[]): any => {
             for (const name of possibleNames) {
@@ -59,7 +62,7 @@ export const parseExcelFile = async (file: File): Promise<ExcelMatchData[]> => {
             // Убираем "rating: XXX.XX" из строки чтобы получить только имя
             const name = playerString.replace(/\s*rating:\s*\d+(?:\.\d+)?/, '').trim();
             
-            return { name: name || `Игрок (строка ${index + 1})`, rating };
+            return { name: name || '', rating };
           };
 
           // Получаем данные игроков
@@ -74,6 +77,22 @@ export const parseExcelFile = async (file: File): Promise<ExcelMatchData[]> => {
           const player1Data = parsePlayerData(player1String);
           const player2Data = parsePlayerData(player2String);
 
+          // Получаем счёт
+          const score = String(getColumnValue([
+            'Счёт', 'счёт', 'Счет', 'счет', 'Score', 'score'
+          ]) || '');
+
+          // ВАЛИДАЦИЯ: пропускаем строку если нет критичных данных
+          if (!player1Data.name || !player2Data.name || !score) {
+            console.warn(`⚠️ Пропущена строка ${index + 2} (Excel): отсутствуют критичные данные`, {
+              player1: player1Data.name || 'ОТСУТСТВУЕТ',
+              player2: player2Data.name || 'ОТСУТСТВУЕТ',
+              score: score || 'ОТСУТСТВУЕТ'
+            });
+            skippedRows++;
+            return; // Пропускаем эту строку
+          }
+
           // Получаем информацию о турнире и лиге из колонки "Турнир"
           const tournamentString = String(getColumnValue([
             'Турнир', 'турнир', 'Tournament', 'tournament'
@@ -84,25 +103,32 @@ export const parseExcelFile = async (file: File): Promise<ExcelMatchData[]> => {
           const tournament = tournamentMatch ? tournamentMatch[1].trim() : tournamentString;
           const league = tournamentMatch ? `Лига ${tournamentMatch[2].trim()}` : 'Неизвестно';
 
-          return {
+          const matchData = {
             игрок_1: player1Data.name,
             игрок_2: player2Data.name,
             рейтинг_1: player1Data.rating,
             рейтинг_2: player2Data.rating,
-            
-            счёт: String(getColumnValue([
-              'Счёт', 'счёт', 'Счет', 'счет', 'Score', 'score'
-            ]) || '0-0'),
-            
+            счёт: score,
             этап: String(getColumnValue([
               'Стадия', 'стадия', 'Этап', 'этап', 'Stage', 'stage'
             ]) || 'Неизвестно'),
-            
             турнир: tournament,
             лига: league
           };
+
+          console.log(`✅ Обработана строка ${index + 2}:`, matchData);
+          matchesData.push(matchData);
         });
 
+        if (skippedRows > 0) {
+          console.warn(`⚠️ ВНИМАНИЕ: Пропущено ${skippedRows} строк из-за отсутствия данных`);
+        }
+
+        if (skippedRows > 0) {
+          console.warn(`⚠️ ВНИМАНИЕ: Пропущено ${skippedRows} строк из-за отсутствия данных`);
+        }
+
+        console.log(`📊 Итого обработано матчей: ${matchesData.length} из ${jsonData.length} строк`);
         console.log('Обработанные данные матчей:', matchesData);
         resolve(matchesData);
         

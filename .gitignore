@@ -19,9 +19,27 @@
 .env.production.local
 venv/
 
+# Database files (SQLite)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+ollamachat.db
+backend/ollamachat.db
+backend/*.db
+backend/*.db-*
+
+# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-ollamachat.db
-trigger_logs/comeback_inability_0b01a566-bf76-4903-a3d5-fbed00aead36.txt
+
+# Trigger logs
+trigger_logs/
+trigger_logs/**/*
+
+# Analysis logs
+backend/analysis_logs/
+backend/analysis_logs/**/*
+
 .venv

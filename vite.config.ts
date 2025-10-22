@@ -23,14 +23,24 @@ export default defineConfig(async () => {
       watch: {
         ignored: [
           '**/backend/**',
+          'backend/**',
           '**/*.db',
           '**/*.db-journal',
           '**/*.db-wal',
+          '**/*.db-shm',
           '**/.env',
           '**/.env.*',
           '**/node_modules/**',
           '**/.git/**',
-          '**/trigger_logs/**'
+          '**/trigger_logs/**',
+          '**/trigger_logs',
+          // Абсолютные пути (более надёжно)
+          /backend\//,
+          /\.db$/,
+          /\.db-journal$/,
+          /\.db-wal$/,
+          /\.db-shm$/,
+          /trigger_logs\//
         ],
         usePolling: false
       },

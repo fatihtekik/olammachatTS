@@ -20,6 +20,21 @@ from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
 
+# Настройка логирования матчей в файл
+MATCH_ANALYSIS_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "analysis_logs")
+os.makedirs(MATCH_ANALYSIS_LOG_DIR, exist_ok=True)
+
+def log_match_analysis(message: str):
+    """Записывает сообщение в лог файл анализа матчей"""
+    timestamp = datetime.now().strftime("%Y%m%d")
+    log_file = os.path.join(MATCH_ANALYSIS_LOG_DIR, f"match_analysis_{timestamp}.txt")
+    
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"{message}\n")
+    except Exception as e:
+        logger.error(f"Ошибка записи в лог: {e}")
+
 class MatchAnalysisService:
     """Сервис для анализа матчей и выявления триггеров"""
     
@@ -75,7 +90,9 @@ class MatchAnalysisService:
             
             for idx, match_data in enumerate(excel_data):
                 try:
-                    print(f"📝 Обрабатываем строку {idx + 1}: {match_data.игрок_1} vs {match_data.игрок_2}")
+                    msg = f"📝 Обрабатываем строку {idx + 1}: {match_data.игрок_1} vs {match_data.игрок_2}"
+                    print(msg)
+                    log_match_analysis(msg)
                     
                     # Получаем или создаем игроков
                     # Обрабатываем игроков с рейтингами
@@ -114,13 +131,17 @@ class MatchAnalysisService:
                         time_str=match_data.время
                     ):
                         skipped_duplicates += 1
-                        print(f"⏭️  Пропускаем дубликат: {match_data.игрок_1} vs {match_data.игрок_2} от {match_date}")
+                        msg = f"⏭️  Пропускаем дубликат: {match_data.игрок_1} vs {match_data.игрок_2} от {match_date}"
+                        print(msg)
+                        log_match_analysis(msg)
                         continue
                     
                     # Создаем матч
                     match = await self._create_match_from_excel(match_data, player1, player2)
                     created_matches += 1
-                    print(f"✅ Создан матч: {match_data.игрок_1} vs {match_data.игрок_2}")
+                    msg = f"✅ Создан матч: {match_data.игрок_1} vs {match_data.игрок_2}"
+                    print(msg)
+                    log_match_analysis(msg)
                     
                 except Exception as e:
                     error_msg = f"Строка {idx + 1}: Ошибка при обработке матча {match_data.игрок_1} vs {match_data.игрок_2}: {str(e)}"
@@ -164,7 +185,9 @@ class MatchAnalysisService:
                 cleaned = rating_str.replace(',', '.').strip()
                 rating_float = float(cleaned)
                 rating = int(round(rating_float))  # Округляем до ближайшего
-                print(f"📊 Рейтинг из поля: {rating_str} -> {rating}")
+                msg = f"📊 Рейтинг из поля: {rating_str} -> {rating}"
+                print(msg)
+                log_match_analysis(msg)
             except (ValueError, AttributeError):
                 logger.warning(f"Не удалось извлечь рейтинг из поля рейтинга: {rating_str}")
         
@@ -285,7 +308,9 @@ class MatchAnalysisService:
                 per_set_scores.append((p1_score, p2_score))
         
         if per_set_scores:
-            print(f"   🎾 Детальные сеты из колонок: {per_set_scores}")
+            msg = f"   🎾 Детальные сеты из колонок: {per_set_scores}"
+            print(msg)
+            log_match_analysis(msg)
         
         # Если не получили из колонок, пробуем из sets_part (старый метод)
         if not per_set_scores and sets_part:
@@ -300,7 +325,9 @@ class MatchAnalysisService:
                 except Exception:
                     continue
             if per_set_scores:
-                print(f"   🎾 Детальные сеты из sets_part: {per_set_scores}")
+                msg = f"   🎾 Детальные сеты из sets_part: {per_set_scores}"
+                print(msg)
+                log_match_analysis(msg)
 
         # 4) Подсчитываем sets_player1/sets_player2 из детальных сетов
         sets_player1 = None
@@ -313,20 +340,26 @@ class MatchAnalysisService:
             if s1 is not None and s2 is not None:
                 sets_player1 = s1
                 sets_player2 = s2
-                print(f"   📊 Счёт из новых колонок: {sets_player1}:{sets_player2}")
+                msg = f"   📊 Счёт из новых колонок: {sets_player1}:{sets_player2}"
+                print(msg)
+                log_match_analysis(msg)
         
         # ПРИОРИТЕТ 2: Подсчитываем из детальных сетов
         if sets_player1 is None and per_set_scores:
             sets_player1 = sum(1 for p1, p2 in per_set_scores if p1 > p2)
             sets_player2 = sum(1 for p1, p2 in per_set_scores if p2 > p1)
-            print(f"   📊 Подсчет из детальных сетов: {sets_player1}:{sets_player2} (из {len(per_set_scores)} сетов)")
+            msg = f"   📊 Подсчет из детальных сетов: {sets_player1}:{sets_player2} (из {len(per_set_scores)} сетов)"
+            print(msg)
+            log_match_analysis(msg)
 
         # ПРИОРИТЕТ 3: Если не удалось подсчитать, берём из общего счёта (старый формат)
         if sets_player1 is None or sets_player2 is None:
             try:
                 a, b = parse_pair(overall_part)
                 sets_player1, sets_player2 = a, b
-                print(f"   📊 Счёт из overall_part (старый формат): {sets_player1}:{sets_player2}")
+                msg = f"   📊 Счёт из overall_part (старый формат): {sets_player1}:{sets_player2}"
+                print(msg)
+                log_match_analysis(msg)
             except Exception as e:
                 sets_player1, sets_player2 = 0, 0
                 print(f"⚠️ Не удалось распарсить общий счёт '{raw_score}': {e}")
@@ -334,10 +367,14 @@ class MatchAnalysisService:
         # 5) Определяем победителя по сетам
         if sets_player1 > sets_player2:
             winner_id = player1.id
-            print(f"   🏆 Победитель: {player1.full_name} ({sets_player1}:{sets_player2})")
+            msg = f"   🏆 Победитель: {player1.full_name} ({sets_player1}:{sets_player2})"
+            print(msg)
+            log_match_analysis(msg)
         elif sets_player2 > sets_player1:
             winner_id = player2.id
-            print(f"   🏆 Победитель: {player2.full_name} ({sets_player1}:{sets_player2})")
+            msg = f"   🏆 Победитель: {player2.full_name} ({sets_player1}:{sets_player2})"
+            print(msg)
+            log_match_analysis(msg)
         else:
             winner_id = None
             print(f"   ⚠️ Ничья или счёт 0:0")
@@ -1476,6 +1513,9 @@ class MatchAnalysisService:
         # TODO: Добавить поле part_id в модель Match если нужно
         
         # ПРИОРИТЕТ 3: Проверка по комбинации параметров (fallback для старых данных без ID)
+        # ЗАКОММЕНТИРОВАНО: Проверка по дате/времени/счету временно отключена
+        # Оставлена только проверка по SL-ID
+        """
         if not date or not player1_id or not player2_id:
             return False
 
@@ -1510,6 +1550,7 @@ class MatchAnalysisService:
             if time_match and score_match:
                 print(f"   ⏭️  Найден дубликат по дате/игрокам/времени/счету")
                 return True
+        """
 
         return False
 

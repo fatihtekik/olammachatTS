@@ -1,0 +1,24 @@
+# Ignore database files
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+backend/ollamachat.db*
+
+# Ignore trigger logs
+trigger_logs/
+backend/trigger_logs/
+
+# Ignore Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Ignore virtual environments
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+
+# Ignore node modules
+node_modules/

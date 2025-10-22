@@ -122,7 +122,10 @@ const AnalysisPage: React.FC = () => {
     { id: 'led_2_sets_lost_match', name: 'Критический проигрыш', description: 'Проигрыш после лидерства 2:0', severity: 'critical' },
     { id: 'psychological_breakdown', name: 'Психологические проблемы', description: 'Нестабильная игра', severity: 'high' },
     { id: 'comeback_inability', name: 'Проблемы с камбеками', description: 'Неспособность отыграться', severity: 'medium' },
-    { id: 'pressure_situations', name: 'Игра под давлением', description: 'Слабые результаты в важных матчах', severity: 'high' }
+    { id: 'pressure_situations', name: 'Игра под давлением', description: 'Слабые результаты в важных матчах', severity: 'high' },
+    { id: 'time_performance', name: 'Слабая форма в ночное время', description: 'Проблемы по времени суток', severity: 'medium' },
+    { id: 'losing_streaks', name: 'Проигрыши в ряд', description: 'Серии поражений подряд', severity: 'medium' },
+    { id: 'post_holiday_problems', name: 'Проблемы после праздников', description: 'Слабая игра после перерывов', severity: 'medium' }
   ];
 
   // === ИНИЦИАЛИЗАЦИЯ ===
