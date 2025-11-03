@@ -859,7 +859,7 @@
 }
 
 .modal-content {
-  background: white;
+  background: #0a0a0a;
   border-radius: 16px;
   padding: 0;
   max-width: 600px;
@@ -871,7 +871,6 @@
 
 .modal-header {
   padding: 25px 30px;
-  border-bottom: 1px solid #e5e7eb;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -879,7 +878,7 @@
 
 .modal-header h3 {
   margin: 0;
-  color: #374151;
+  color: #dce8fa;
   font-size: 1.2rem;
 }
 
@@ -941,7 +940,7 @@
 
 .modal-footer {
   padding: 20px 30px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid #0a0a0a;
   display: flex;
   gap: 10px;
   justify-content: flex-end;
