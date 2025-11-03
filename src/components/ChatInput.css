@@ -2,9 +2,10 @@
   display: flex;
   flex-direction: column;
   margin-top: 15px;
-  border-top: 1px solid #e0e0e0;
+  border-top: 1px solid var(--border-primary);
   padding-top: 15px;
   position: relative;
+  background-color: var(--bg-primary);
 }
 
 .input-row {
@@ -16,40 +17,44 @@
 .chat-textarea {
   flex-grow: 1;
   resize: none;
-  border: 1px solid #ccc;
-  border-radius: 20px;
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
   padding: 12px 18px;
   font-family: inherit;
   min-height: 50px;
   font-size: 14px;
-  transition: border 0.2s, box-shadow 0.2s;
+  transition: all 0.3s ease;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 .chat-textarea:focus {
   outline: none;
-  border-color: #0d6efd;
-  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.2);
+  border-color: var(--orange-primary);
+  box-shadow: 0 0 0 3px rgba(255, 107, 0, 0.2);
+  background-color: var(--bg-card);
 }
 
 .chat-textarea.disabled {
-  background-color: #f5f5f5;
-  color: #bdbdbd;
+  background-color: var(--bg-tertiary);
+  color: var(--text-disabled);
   cursor: not-allowed;
 }
 
 .send-button {
   padding: 0 20px;
-  background-color: #0d6efd;
+  background: linear-gradient(135deg, var(--orange-primary), var(--orange-hover));
   color: white;
   border: none;
-  border-radius: 20px;
+  border-radius: 12px;
   cursor: pointer;
   height: 45px;
   font-weight: 500;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 4px 12px rgba(255, 107, 0, 0.2);
 }
 
 .send-button i {
@@ -57,31 +62,34 @@
 }
 
 .send-button:hover {
-  background-color: #0b5ed7;
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255, 107, 0, 0.3);
 }
 
 .send-button:active {
-  transform: translateY(1px);
+  transform: translateY(0);
 }
 
 .send-button:disabled {
-  background-color: #cccccc;
+  background: var(--bg-tertiary);
+  color: var(--text-disabled);
   cursor: not-allowed;
   transform: none;
+  box-shadow: none;
 }
 
 .match-analysis-button {
   width: 45px;
   height: 45px;
   border-radius: 50%;
-  background-color: #17a2b8;
+  background: linear-gradient(135deg, #17a2b8, #138496);
   border: none;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(23, 162, 184, 0.2);
 }
 
 .match-analysis-button i {
@@ -90,12 +98,12 @@
 }
 
 .match-analysis-button:hover {
-  background-color: #138496;
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(23, 162, 184, 0.3);
 }
 
 .match-analysis-button:active {
-  transform: translateY(1px);
+  transform: translateY(0);
 }
 
 .match-analysis-button:disabled {

@@ -12,7 +12,7 @@ def save_emb(chunks, embeddings, filename = "vectors.npz", meta_file= "metadata.
             "text": chunk
         })
 
-    with open(meta_file, "w", encoding="cp1251") as f:
+    with open(meta_file, "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent =2)
     print(f"Сохранено {len(chunks)} в файл {filename} и {meta_file}")
 
@@ -21,7 +21,7 @@ def save_emb(chunks, embeddings, filename = "vectors.npz", meta_file= "metadata.
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 def embedding(path: str):
-    with open(path, "r", encoding = "cp1251") as f:
+    with open(path, "r", encoding = "utf-8") as f:
         text = f.read()
     chunks = split(text, chunk_size=50, overlap=10)
     embeddings = model.encode(chunks)
@@ -42,6 +42,7 @@ def split(text, chunk_size = 50, overlap = 10):
     return chunks
 
 
-# if __name__ == "__main__":
-#     chunks, embeddings = embedding("типа.txt")
-#     save_emb(chunks, embeddings)
+if __name__ == "__main__":
+    chunks, embeddings = embedding("раг.txt")
+    save_emb(chunks, embeddings)
+    

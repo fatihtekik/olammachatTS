@@ -1,6 +1,8 @@
 import React, { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { parseExcelFile, ExcelMatchData } from '../utils/excelParser';
 import { downloadExampleExcelFile } from '../utils/excelHelpers';
+import { useInvalidateStats } from '../hooks/useDashboardStats';
 import './ExcelUploadPage.css';
 
 interface UploadResult {
@@ -45,6 +47,8 @@ interface Match {
 }
 
 const ExcelUploadPage: React.FC = () => {
+  const navigate = useNavigate();
+  const invalidateStats = useInvalidateStats();
   const [isDragOver, setIsDragOver] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -60,6 +64,12 @@ const ExcelUploadPage: React.FC = () => {
     'losing_streaks'
   ]);
   const [matchesData, setMatchesData] = useState<Match[]>([]);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStage, setUploadStage] = useState('');
+  const [uploadSpeed, setUploadSpeed] = useState<string>('');
+  const [uploadedSize, setUploadedSize] = useState<string>('');
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [analysisStage, setAnalysisStage] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const triggerTypeLabels: { [key: string]: string } = {
@@ -98,72 +108,180 @@ const ExcelUploadPage: React.FC = () => {
     setIsUploading(true);
     setError(null);
     setUploadResult(null);
+    setUploadProgress(0);
+    setUploadStage('Подготовка файла...');
+    setUploadSpeed('');
+    setUploadedSize('');
+    
+    let smoothProgressInterval: NodeJS.Timeout | null = null;
     
     try {
       const formData = new FormData();
       formData.append('file', file);
 
-      console.log('🚀 Начинаем загрузку файла:', file.name);
-
-      const response = await fetch('http://localhost:8000/api/v1/match-analysis/upload-excel', {
-        method: 'POST',
-        body: formData,
+      console.log('🚀 Начинаем загрузку файла:', file.name, `(${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+      
+      // Показываем начальный прогресс
+      await new Promise(resolve => setTimeout(resolve, 300));
+      setUploadProgress(5);
+      setUploadStage('Подготовка данных...');
+      
+      const startTime = Date.now();
+      let lastLoaded = 0;
+      let lastTime = startTime;
+      let uploadStarted = false;
+      
+      // Используем XMLHttpRequest для отслеживания прогресса загрузки
+      const xhr = new XMLHttpRequest();
+      
+      let smoothProgress = 5; // Начинаем с 5%
+      let actualProgress = 0;
+      
+      // Плавное обновление прогресса
+      smoothProgressInterval = setInterval(() => {
+        if (smoothProgress < actualProgress) {
+          smoothProgress = Math.min(smoothProgress + 2, actualProgress);
+          setUploadProgress(smoothProgress);
+        }
+      }, 50); // Обновляем каждые 50мс
+      
+      // Обработчик прогресса загрузки
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) {
+          actualProgress = Math.round((event.loaded / event.total) * 95); // Оставляем 5% для обработки
+          
+          if (!uploadStarted) {
+            uploadStarted = true;
+            setUploadStage('Отправка файла на сервер...');
+          }
+          
+          // Расчет скорости загрузки
+          const currentTime = Date.now();
+          const timeDiff = (currentTime - lastTime) / 1000; // в секундах
+          const bytesDiff = event.loaded - lastLoaded;
+          
+          if (timeDiff > 0.3) { // Обновляем скорость каждые 0.3 сек
+            const speedBps = bytesDiff / timeDiff;
+            const speedKbps = speedBps / 1024;
+            const speedMbps = speedKbps / 1024;
+            
+            let speedText = '';
+            if (speedMbps >= 1) {
+              speedText = `${speedMbps.toFixed(2)} MB/s`;
+            } else if (speedKbps >= 1) {
+              speedText = `${speedKbps.toFixed(2)} KB/s`;
+            } else {
+              speedText = `${speedBps.toFixed(0)} B/s`;
+            }
+            
+            setUploadSpeed(speedText);
+            lastLoaded = event.loaded;
+            lastTime = currentTime;
+          }
+          
+          // Размер загруженных данных
+          const loadedMB = (event.loaded / 1024 / 1024).toFixed(2);
+          const totalMB = (event.total / 1024 / 1024).toFixed(2);
+          setUploadedSize(`${loadedMB} / ${totalMB} MB`);
+        }
       });
 
-      console.log('📡 Получен ответ сервера:', response.status, response.statusText);
-
-      if (!response.ok) {
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-        
-        try {
-          const errorText = await response.text();
-          console.log('📝 Текст ошибки от сервера:', errorText);
+      // Обработчик завершения загрузки
+      const uploadPromise = new Promise<any>((resolve, reject) => {
+        xhr.onload = async () => {
+          console.log('📡 Получен ответ сервера:', xhr.status, xhr.statusText);
           
-          try {
-            const errorJson = JSON.parse(errorText);
-            errorMessage = errorJson.detail || errorJson.message || errorMessage;
-          } catch {
-            errorMessage = errorText || errorMessage;
+          if (xhr.status >= 200 && xhr.status < 300) {
+            // Плавно доводим до 95%
+            actualProgress = 95;
+            setUploadStage('Обработка данных на сервере...');
+            
+            // Ждем пока догонит плавная анимация
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            try {
+              const result = JSON.parse(xhr.responseText);
+              console.log('✅ Результат загрузки:', result);
+              resolve(result);
+            } catch (parseError) {
+              reject(new Error('Ошибка парсинга ответа сервера'));
+            }
+          } else {
+            try {
+              const err = JSON.parse(xhr.responseText);
+              reject(new Error(err.detail || xhr.statusText));
+            } catch {
+              reject(new Error(xhr.statusText || 'Ошибка загрузки'));
+            }
           }
-        } catch (textError) {
-          console.error('❌ Не удалось получить текст ошибки:', textError);
-        }
-        
-        throw new Error(errorMessage);
+        };
+
+        xhr.onerror = () => {
+          reject(new Error('Ошибка сети при загрузке файла'));
+        };
+
+        xhr.ontimeout = () => {
+          reject(new Error('Превышено время ожидания'));
+        };
+      });
+
+      // Настройка и отправка запроса
+      xhr.open('POST', 'http://localhost:8000/api/v1/match-analysis/upload-excel', true);
+      xhr.timeout = 300000; // 5 минут таймаут
+      xhr.send(formData);
+
+      // Ожидаем завершения загрузки
+      const result = await uploadPromise;
+      
+      // Останавливаем плавную анимацию
+      clearInterval(smoothProgressInterval);
+      
+      // Плавно доводим до 100%
+      actualProgress = 100;
+      for (let i = smoothProgress; i <= 100; i++) {
+        setUploadProgress(i);
+        await new Promise(resolve => setTimeout(resolve, 20));
       }
-
-      const responseText = await response.text();
-      console.log('📄 Сырой ответ сервера:', responseText);
-
-      if (!responseText || responseText.trim() === '') {
-        throw new Error('Сервер вернул пустой ответ');
-      }
-
-      let result: UploadResult;
-      try {
-        result = JSON.parse(responseText);
-        console.log('✅ Результат загрузки:', result);
-      } catch (parseError) {
-        console.error('❌ Ошибка парсинга JSON:', parseError);
-        throw new Error(`Не удалось распарсить ответ сервера: ${parseError}`);
-      }
-
+      
+      setUploadStage('Загрузка завершена!');
       setUploadResult(result);
       
-      // Сразу после успешной загрузки обновляем статистику
-      if (result.success) {
-        await updateStats();
-        await loadMatches();
+      // Инвалидируем кеш статистики дашборда после успешной загрузки
+      if (result.success !== false) {
+        console.log('🔄 Инвалидация кеша статистики после загрузки файла');
+        invalidateStats();
       }
       
     } catch (err: any) {
-      setError(err.message || 'Ошибка при загрузке файлаЁЁЁ');
+      console.error('❌ Ошибка загрузки:', err);
+      
+      // Очищаем интервал при ошибке
+      if (smoothProgressInterval) {
+        clearInterval(smoothProgressInterval);
+      }
+      
+      setError(err.message || 'Ошибка при загрузке файла');
       setUploadResult({
         success: false,
         error: err.message || 'Неизвестная ошибка'
       });
+      setUploadProgress(0);
+      setUploadStage('');
+      setUploadSpeed('');
+      setUploadedSize('');
     } finally {
-      setIsUploading(false);
+      // Очищаем интервал в любом случае
+      if (smoothProgressInterval) {
+        clearInterval(smoothProgressInterval);
+      }
+      
+      setTimeout(() => {
+        setIsUploading(false);
+        setUploadProgress(0);
+        setUploadStage('');
+        setUploadSpeed('');
+        setUploadedSize('');
+      }, 1500); // Увеличил время для отображения 100%
     }
   };
 
@@ -245,8 +363,23 @@ const ExcelUploadPage: React.FC = () => {
   const runAnalysis = async () => {
     setIsAnalyzing(true);
     setShowAnalysisModal(false);
+    setAnalysisProgress(0);
+    setAnalysisStage('Подготовка анализа...');
     
     try {
+      setAnalysisProgress(10);
+      setAnalysisStage('Отправка запроса на анализ...');
+      
+      // Имитация прогресса во время ожидания ответа
+      const progressInterval = setInterval(() => {
+        setAnalysisProgress(prev => {
+          if (prev < 85) {
+            return prev + 1;
+          }
+          return prev;
+        });
+      }, 300); // Обновляем каждые 300мс
+      
       const response = await fetch('http://localhost:8000/api/v1/match-analysis/analyze', {
         method: 'POST',
         headers: {
@@ -260,6 +393,10 @@ const ExcelUploadPage: React.FC = () => {
       });
 
       console.log('📡 Получен ответ сервера:', response.status, response.statusText);
+      
+      clearInterval(progressInterval);
+      setAnalysisProgress(90);
+      setAnalysisStage('Получение результатов...');
 
       if (!response.ok) {
         let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
@@ -281,6 +418,9 @@ const ExcelUploadPage: React.FC = () => {
         throw new Error(errorMessage);
       }
 
+      setAnalysisProgress(95);
+      setAnalysisStage('Обработка результатов...');
+      
       const responseText = await response.text();
       console.log('📄 Сырой ответ сервера:', responseText);
 
@@ -297,12 +437,20 @@ const ExcelUploadPage: React.FC = () => {
         throw new Error(`Не удалось распарсить ответ сервера: ${parseError}`);
       }
 
+      setAnalysisProgress(100);
+      setAnalysisStage('Анализ завершён!');
       setAnalysisResult(result);
     } catch (error) {
       console.error('💥 Ошибка при анализе:', error);
       alert('Ошибка при анализе: ' + (error instanceof Error ? error.message : 'Неизвестная ошибка'));
+      setAnalysisProgress(0);
+      setAnalysisStage('');
     } finally {
-      setIsAnalyzing(false);
+      setTimeout(() => {
+        setIsAnalyzing(false);
+        setAnalysisProgress(0);
+        setAnalysisStage('');
+      }, 1500);
     }
   };
 
@@ -312,32 +460,6 @@ const ExcelUploadPage: React.FC = () => {
         ? prev.filter(t => t !== triggerType)
         : [...prev, triggerType]
     );
-  };
-
-  const getMatchRowClass = (match: Match, analysisResult: AnalysisResult | null) => {
-    // Проверяем, есть ли триггеры для игроков этого матча
-    let hasPlayerTriggers = false;
-    if (analysisResult && analysisResult.triggers) {
-      hasPlayerTriggers = analysisResult.triggers.some(trigger => 
-        trigger.player_id === match.player1_id || trigger.player_id === match.player2_id
-      );
-    }
-    
-    // Определяем, кто выиграл (по winner_id или по счету)
-    let isPlayer1Winner = false;
-    if (match.winner_id) {
-      isPlayer1Winner = match.winner_id === match.player1_id;
-    } else {
-      // Если нет winner_id, определяем по сетам
-      isPlayer1Winner = match.sets_player1 > match.sets_player2;
-    }
-    
-    // Возвращаем класс в зависимости от наличия триггеров и результата
-    if (hasPlayerTriggers) {
-      return isPlayer1Winner ? 'match-row-win-trigger' : 'match-row-loss-trigger';
-    } else {
-      return isPlayer1Winner ? 'match-row-win-normal' : 'match-row-loss-normal';
-    }
   };
 
   const handleReset = () => {
@@ -359,13 +481,21 @@ const ExcelUploadPage: React.FC = () => {
 
   return (
     <div className="excel-upload-page">
-      <div className="upload-header">
-        <h1>Анализ матчей</h1>
-        <p>Загрузите файл Excel с данными матчей и проведите анализ триггеров для выявления проблем игроков</p>
-      </div>
+      {/* Основной контент */}
+      <div className="analysis-content">
 
       {!uploadResult ? (
         <div className="upload-section">
+          <div className="section-header">
+            <h2>Загрузить Excel файл</h2>
+            <button className="settings-button" title="Настройки анализа">
+              <i className="bi bi-gear"></i>
+            </button>
+          </div>
+          
+          <p className="section-description">
+            Загрузите файл с данными матчей для автоматической обработки и выявления закономерностей
+          </p>
           <div 
             className={`drop-zone ${isDragOver ? 'drag-over' : ''}`}
             onDrop={handleDrop}
@@ -384,53 +514,27 @@ const ExcelUploadPage: React.FC = () => {
             {isProcessing ? (
               <div className="processing">
                 <div className="spinner"></div>
-                <p>Обработка файла...</p>
+                <p>Обработка данных...</p>
               </div>
             ) : (
               <>
                 <i className="bi bi-file-earmark-excel upload-icon"></i>
-                <h3>Загрузите Excel файл</h3>
-                <p>или кликните для выбора файла</p>
+                <h3>Загрузить Excel файл</h3>
+                <p>Загрузите файл с матчами для анализа триггеров</p>
                 <div className="supported-formats">
-                  Поддерживаемые форматы: .xlsx, .xls
+                  Форматы: .xlsx, .xls
                 </div>
               </>
             )}
           </div>
 
-          <div className="help-section">
-            <h3>Как подготовить файл Excel?</h3>
-            <div className="help-content">
-              <div className="help-item">
-                <i className="bi bi-download"></i>
-                <div>
-                  <h4>Скачайте пример</h4>
-                  <p>Используйте наш шаблон для правильного форматирования данных</p>
-                  <button 
-                    onClick={downloadExampleExcelFile}
-                    className="download-example-btn"
-                  >
-                    <i className="bi bi-download"></i>
-                    Скачать пример
-                  </button>
-                </div>
-              </div>
-              
-              <div className="help-item">
-                <i className="bi bi-table"></i>
-                <div>
-                  <h4>Структура данных</h4>
-                  <p>Файл должен содержать колонки: Игрок 1, Игрок 2, Рейтинг 1, Рейтинг 2, Счёт, Турнир, Этап, Лига</p>
-                </div>
-              </div>
-              
-              <div className="help-item">
-                <i className="bi bi-check-circle"></i>
-                <div>
-                  <h4>Проверка данных</h4>
-                  <p>Убедитесь, что все обязательные поля заполнены и рейтинги указаны числами</p>
-                </div>
-              </div>
+          <div className="format-info">
+            <i className="bi bi-info-circle"></i>
+            <div>
+              <strong>Формат файла:</strong>
+              <p><strong>Обязательные столбцы:</strong> Дата, Игрок 1, Счёт, Игрок 2</p>
+              <p><strong>Для корректных рейтингов:</strong> Рейтинг игрок 1, Рейтинг игрок 2</p>
+              <p><strong>Дополнительно:</strong> Время, Стадия, Турнир</p>
             </div>
           </div>
 
@@ -687,59 +791,6 @@ const ExcelUploadPage: React.FC = () => {
               )}
             </div>
           )}
-
-          {/* Список матчей с подсветкой */}
-          {matchesData.length > 0 && (
-            <div className="matches-section">
-              <h3>
-                <i className="bi bi-table"></i>
-                Матчи ({matchesData.length})
-              </h3>
-              <div className="matches-table-container">
-                <table className="matches-table">
-                  <thead>
-                    <tr>
-                      <th>Дата/Время</th>
-                      <th>Игрок 1</th>
-                      <th>Игрок 2</th>
-                      <th>Счёт</th>
-                      <th>Победитель</th>
-                      <th>Турнир</th>
-                      <th>Стадия</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {matchesData.map((match) => {
-                      const isPlayer1Winner = match.winner_id ? 
-                        match.winner_id === match.player1_id : 
-                        match.sets_player1 > match.sets_player2;
-                      
-                      return (
-                        <tr key={match.id} className={getMatchRowClass(match, analysisResult)}>
-                          <td>
-                            <div className="match-datetime">
-                              <div className="match-date">{match.date}</div>
-                              {match.time && <div className="match-time">{match.time}</div>}
-                            </div>
-                          </td>
-                          <td className={isPlayer1Winner ? 'winner' : 'loser'}>
-                            {match.player1}
-                          </td>
-                          <td className={!isPlayer1Winner ? 'winner' : 'loser'}>
-                            {match.player2}
-                          </td>
-                          <td className="score">{match.score}</td>
-                          <td className="winner-cell">{match.winner}</td>
-                          <td>{match.tournament}</td>
-                          <td>{match.stage}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -794,6 +845,58 @@ const ExcelUploadPage: React.FC = () => {
           </div>
         </div>
       )}
+      
+      {/* Loading Overlay для загрузки */}
+      {isUploading && (
+        <div className="upload-overlay">
+          <div className="upload-overlay-content">
+            <div className="upload-spinner">
+              <div className="spinner-ring"></div>
+              <div className="spinner-ring"></div>
+              <div className="spinner-ring"></div>
+            </div>
+            <h2>Загрузка данных</h2>
+            <p className="upload-stage">{uploadStage}</p>
+            <div className="progress-bar">
+              <div 
+                className="progress-fill" 
+                style={{ width: `${uploadProgress}%` }}
+              ></div>
+            </div>
+            <span className="progress-text">{uploadProgress}%</span>
+            {uploadSpeed && (
+              <div className="upload-info">
+                <span className="upload-speed">⚡ {uploadSpeed}</span>
+                {uploadedSize && <span className="upload-size">📦 {uploadedSize}</span>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      
+      {/* Loading Overlay для анализа */}
+      {isAnalyzing && (
+        <div className="upload-overlay">
+          <div className="upload-overlay-content">
+            <div className="upload-spinner">
+              <div className="spinner-ring"></div>
+              <div className="spinner-ring"></div>
+              <div className="spinner-ring"></div>
+            </div>
+            <h2>Анализ данных</h2>
+            <p className="upload-stage">{analysisStage}</p>
+            <div className="progress-bar">
+              <div 
+                className="progress-fill" 
+                style={{ width: `${analysisProgress}%` }}
+              ></div>
+            </div>
+            <span className="progress-text">{analysisProgress}%</span>
+          </div>
+        </div>
+      )}
+      
+      </div> {/* Закрываем analysis-content */}
     </div>
   );
 };

@@ -84,6 +84,27 @@ class MatchBase(SQLModel):
     duration_minutes: Optional[int] = None
     is_final: bool = Field(default=False)
     is_semifinal: bool = Field(default=False)
+    
+    # Новые поля для эффективности игроков в матче
+    serve_efficiency_p1: Optional[int] = None  # Эффективность подачи игрока 1 в матче (%)
+    receive_efficiency_p1: Optional[int] = None  # Эффективность приёма игрока 1 в матче (%)
+    serve_efficiency_p2: Optional[int] = None  # Эффективность подачи игрока 2 в матче (%)
+    receive_efficiency_p2: Optional[int] = None  # Эффективность приёма игрока 2 в матче (%)
+    
+    # Временные характеристики матча
+    match_duration_formatted: Optional[str] = None  # Время матча в формате "ЧЧ:ММ:СС"
+    
+    # Дисциплинарные действия
+    timeouts_p1: Optional[int] = None  # Таймауты игрока 1
+    timeouts_p2: Optional[int] = None  # Таймауты игрока 2
+    yellow_cards_p1: Optional[int] = None  # Жёлтые карточки игрока 1
+    yellow_cards_p2: Optional[int] = None  # Жёлтые карточки игрока 2
+    red_cards_p1: Optional[int] = None  # Красные карточки игрока 1
+    red_cards_p2: Optional[int] = None  # Красные карточки игрока 2
+    
+    # Баланс игры
+    game_balance: Optional[int] = None  # Баланс в игре (общий)
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Match(MatchBase, table=True):
@@ -118,6 +139,19 @@ class MatchSetBase(SQLModel):
     player1_points: int
     player2_points: int
     duration_minutes: Optional[int] = None
+    
+    # Эффективность игроков в конкретном сете
+    serve_efficiency_p1: Optional[int] = None  # Эффективность подачи игрока 1 в сете (%)
+    receive_efficiency_p1: Optional[int] = None  # Эффективность приёма игрока 1 в сете (%)
+    serve_efficiency_p2: Optional[int] = None  # Эффективность подачи игрока 2 в сете (%)
+    receive_efficiency_p2: Optional[int] = None  # Эффективность приёма игрока 2 в сете (%)
+    
+    # Время сета
+    set_duration_formatted: Optional[str] = None  # Время сета в формате "ММ:СС"
+    
+    # Баланс в сете
+    set_balance: Optional[int] = None  # Баланс в конкретном сете
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class MatchSet(MatchSetBase, table=True):

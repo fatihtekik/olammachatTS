@@ -652,22 +652,50 @@ def trigger(data: dict) -> str:
 
 
 # НОВЫЙМАРШРУТ ДЛЯ АНАЛИЗА НА ГЛАВНОЙ СТРАНИЦЕ
-async def ollama_stream(prompt: str):
-    async with httpx.AsyncClient(timeout=None) as client:
-        print("AGGAGAGAGAGAGAG")
-        async with client.stream("POST", "http://localhost:11434/api/chat", json={
-            "model": "llama3.1:8b",  # ЗАМЕНИ НА НАЗВАНИЕ СВОЕЙ МОДЕЛИ КОТОРУЮ ТЫ НАЗВАЛ У СЕБЯ В OLLAMA
-            "stream": True,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ]
-        }) as response:
-            async for line in response.aiter_lines():
-                if not line.strip():
-                    continue
-                try:
-                    data = json.loads(line)
-                    if "message" in data and "content" in data["message"]:
-                        yield data["message"]["content"]
-                except json.JSONDecodeError:
-                    continue
+async def ollama_stream(model: str, messages: List[Dict[str, str]]):
+    """
+    Потоковая передача ответа от Ollama для чата
+    
+    Args:
+        model: Название модели (например, "phi3", "llama3.1:8b")
+        messages: Список сообщений в формате [{"role": "user", "content": "..."}]
+    """
+    try:
+        # Используем настройку из конфига вместо хардкода
+        ollama_url = f"{settings.OLLAMA_API_URL}/api/chat"
+        
+        async with httpx.AsyncClient(timeout=None) as client:
+            print(f"🌊 Стриминг к модели {model} через {ollama_url}")
+            async with client.stream("POST", ollama_url, json={
+                "model": model,  # Используем переданную модель
+                "stream": True,
+                "messages": messages  # Передаем все сообщения как есть
+            }) as response:
+                # Проверяем статус ответа
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    logger.error(f"Ollama streaming error: {response.status_code} - {error_text}")
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Ollama API error: {error_text.decode()}"
+                    )
+                
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                        if "message" in data and "content" in data["message"]:
+                            yield data["message"]["content"]
+                        elif "error" in data:
+                            logger.error(f"Ollama returned error: {data['error']}")
+                            raise HTTPException(status_code=500, detail=data["error"])
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse JSON line: {line[:100]}")
+                        continue
+    except httpx.HTTPError as e:
+        logger.error(f"HTTP error in ollama_stream: {e}")
+        raise HTTPException(status_code=500, detail=f"Connection error to Ollama: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error in ollama_stream: {e}")
+        raise HTTPException(status_code=500, detail=f"Error streaming from Ollama: {str(e)}")

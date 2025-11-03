@@ -14,7 +14,9 @@ export interface Message {
   content: string;
   timestamp: Date;
   error?: boolean;
-  attachments?: FileAttachment[]; // Добавляем поддержку вложений
+  attachments?: FileAttachment[];
+  provider?: 'ollama' | 'lmstudio'; // Добавляем информацию о провайдере
+  model?: string; // Добавляем информацию о модели
 }
 
 export interface ChatSession {

@@ -5,8 +5,14 @@ import ModelSelector from './ModelSelector';
 import ChatSessionList from './ChatSessionList';
 import LoadingIndicator from './LoadingIndicator';
 import UserProfile from './UserProfile';
+import AIProviderSettings, { AIProvider } from './AIProviderSettings';
 import { Message, ModelType, ChatSession, MatchData, TriggerResponse } from '../types/chat';
-import { getAvailableModels, testConnection } from '../services/ollamaApi';
+import { 
+  getAvailableModels, 
+  testConnection,
+  getCurrentProvider,
+  setCurrentProvider as setProviderInStorage 
+} from '../services/aiProviderApi';
 import './ChatPage.css';
 
 interface ChatPageProps {
@@ -14,6 +20,7 @@ interface ChatPageProps {
   currentUser: {id: string, username: string, email: string, full_name?: string} | null;
   messages: Message[];
   isLoading: boolean;
+  isStreaming: boolean;
   model: ModelType;
   sessions: ChatSession[];
   activeSessionId: string | null;
@@ -44,6 +51,7 @@ const ChatPage: React.FC<ChatPageProps> = ({
   currentUser,
   messages,
   isLoading,
+  isStreaming,
   model,
   sessions,
   activeSessionId,
@@ -68,6 +76,54 @@ const ChatPage: React.FC<ChatPageProps> = ({
   setConnectionStatus,
   setShowSessions
 }) => {
+  const [showProviderSettings, setShowProviderSettings] = useState(false);
+  const [currentProvider, setCurrentProvider] = useState<AIProvider>(getCurrentProvider);
+  const [streamingEnabled, setStreamingEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem('streamingEnabled');
+    return saved !== null ? JSON.parse(saved) : true; // По умолчанию включен
+  });
+
+  // Сохраняем настройку стриминга
+  const handleStreamingChange = (enabled: boolean) => {
+    setStreamingEnabled(enabled);
+    localStorage.setItem('streamingEnabled', JSON.stringify(enabled));
+  };
+
+  // Обновляем провайдера и перезагружаем модели
+  const handleProviderChange = async (provider: AIProvider) => {
+    setCurrentProvider(provider);
+    setProviderInStorage(provider);
+    await refreshModelsForProvider();
+  };
+
+  const refreshModelsForProvider = async () => {
+    setConnectionStatus('checking');
+    try {
+      const isConnected = await testConnection();
+      if (isConnected) {
+        const freshModels = await getAvailableModels();
+        setModels(freshModels);
+        setConnectionStatus('connected');
+        
+        if (freshModels.length > 0) {
+          // Если текущая модель не в списке, выбираем первую
+          if (!freshModels.some(m => m.id === model)) {
+            setModel(freshModels[0].id);
+          }
+        } else {
+          const providerName = getCurrentProvider() === 'ollama' ? 'Ollama' : 'LM Studio';
+          alert(`Модели не найдены в ${providerName}. Пожалуйста, загрузите модели.`);
+        }
+      } else {
+        setConnectionStatus('disconnected');
+        setModels([]);
+      }
+    } catch (error) {
+      console.error('Error refreshing models:', error);
+      setConnectionStatus('disconnected');
+      setModels([]);
+    }
+  };
 
   return (
     <div className="chat-page">
@@ -76,16 +132,23 @@ const ChatPage: React.FC<ChatPageProps> = ({
           <h1>Чат с ИИ</h1>
           {connectionStatus === 'connected' ? (
             <span className="status connected">
-              Подключено к Ollama ({models.length} {models.length === 1 ? 'модель' : models.length < 5 ? 'модели' : 'моделей'} доступно)
+              Подключено к {currentProvider === 'ollama' ? 'Ollama' : 'LM Studio'} ({models.length} {models.length === 1 ? 'модель' : models.length < 5 ? 'модели' : 'моделей'} доступно)
             </span>
           ) : connectionStatus === 'disconnected' ? (
-            <span className="status disconnected">Ollama not available</span>
+            <span className="status disconnected">{currentProvider === 'ollama' ? 'Ollama' : 'LM Studio'} not available</span>
           ) : (
             <span className="status checking">Checking connection...</span>
           )}
         </div>
         
         <div className="actions">
+          <button 
+            onClick={() => setShowProviderSettings(true)} 
+            className="settings-button"
+            title="Настройки AI провайдера"
+          >
+            <i className="bi bi-gear"></i>
+          </button>
           <button onClick={() => setShowSessions(!showSessions)} className="session-button">
             {showSessions ? 'Скрыть сессии' : 'Показать сессии'}
           </button>
@@ -105,6 +168,16 @@ const ChatPage: React.FC<ChatPageProps> = ({
           </div>
         </div>
       </header>
+      
+      <AIProviderSettings
+        isOpen={showProviderSettings}
+        onClose={() => setShowProviderSettings(false)}
+        currentProvider={currentProvider}
+        onProviderChange={handleProviderChange}
+        onRefreshModels={refreshModelsForProvider}
+        streamingEnabled={streamingEnabled}
+        onStreamingChange={handleStreamingChange}
+      />
       
       <div className="chat-content-wrapper">
         {showSessions && (
@@ -126,35 +199,11 @@ const ChatPage: React.FC<ChatPageProps> = ({
               models={models}
               selectedModel={model} 
               onSelectModel={(newModel) => {
-                console.log('🎯 Пользователь выбрал модель:', newModel);
+                console.log('Пользователь выбрал модель:', newModel);
                 setModel(newModel);
               }}
               disabled={connectionStatus !== 'connected'}
-              onRefreshModels={async () => {
-                setConnectionStatus('checking');
-                try {
-                  const isConnected = await testConnection();
-                  if (isConnected) {
-                    const freshModels = await getAvailableModels();
-                    setModels(freshModels);
-                    setConnectionStatus('connected');
-                    if (freshModels.length === 0) {
-                      alert('Модели не найдены. Пожалуйста, выполните "ollama pull MODEL_NAME" для загрузки моделей.');
-                    } else {
-                      // Check if current model exists in the new model list
-                      const currentModelExists = freshModels.some(m => m.id === model);
-                      if (!currentModelExists && freshModels.length > 0) {
-                        setModel(freshModels[0].id);
-                      }
-                    }
-                  } else {
-                    setConnectionStatus('disconnected');
-                  }
-                } catch (error) {
-                  console.error('Error refreshing models:', error);
-                  setConnectionStatus('disconnected');
-                }
-              }}
+              onRefreshModels={refreshModelsForProvider}
             />
           </div>
           
@@ -162,7 +211,8 @@ const ChatPage: React.FC<ChatPageProps> = ({
             {messages.map((message) => (
               <ChatMessage key={message.id} message={message} />
             ))}
-            {isLoading && <LoadingIndicator model={model} />}
+            {/* Показываем LoadingIndicator только если загрузка И НЕ стриминг */}
+            {isLoading && !isStreaming && <LoadingIndicator model={model} />}
             {messages.length === 0 && (
               <div className="empty-chat">
                 <h2>Start a new conversation</h2>

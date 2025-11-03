@@ -8,80 +8,95 @@
     gap: 8px;
     cursor: pointer;
     padding: 6px 10px;
-    border-radius: 4px;
-    background-color: rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    background-color: rgba(255, 107, 0, 0.1);
+    border: 1px solid var(--border-primary);
+    transition: all 0.2s ease;
 }
 
 .user-info:hover {
-    background-color: rgba(255, 255, 255, 0.25);
+    background-color: rgba(255, 107, 0, 0.2);
+    border-color: var(--orange-primary);
+    transform: translateY(-1px);
 }
 
 .user-avatar {
     width: 30px;
     height: 30px;
     border-radius: 50%;
-    background-color: #4a6da7;
+    background: linear-gradient(135deg, var(--orange-primary), var(--orange-hover));
     color: white;
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: bold;
+    box-shadow: 0 2px 8px rgba(255, 107, 0, 0.3);
 }
 
 .username {
-    font-weight: 500;
-    color: #333;
+    font-weight: 600;
+    color: var(--text-primary);
 }
 
 .user-dropdown {
     position: absolute;
     top: 100%;
     right: 0;
-    background-color: white;
-    border-radius: 4px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    min-width: 200px;
+    background-color: var(--bg-card);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--border-primary);
+    min-width: 220px;
     margin-top: 8px;
     z-index: 10;
+    overflow: hidden;
 }
 
 .user-details {
-    padding: 12px;
-    border-bottom: 1px solid #eee;
+    padding: 16px;
+    border-bottom: 1px solid var(--border-primary);
+    background: linear-gradient(135deg, rgba(255, 107, 0, 0.05), transparent);
 }
 
 .detail-item {
     margin: 6px 0;
     font-size: 14px;
-    color: #333;
+    color: var(--text-secondary);
+}
+
+.detail-item strong {
+    color: var(--orange-primary);
 }
 
 .dropdown-actions {
     padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
 }
 
 .dropdown-button {
     background: none;
     border: none;
     text-align: left;
-    padding: 8px 12px;
+    padding: 10px 12px;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: 8px;
     font-size: 14px;
-    color: #333;
+    font-weight: 500;
+    color: var(--text-primary);
+    transition: all 0.2s ease;
 }
 
 .dropdown-button:hover {
-    background-color: #f5f5f5;
+    background-color: rgba(255, 107, 0, 0.1);
+    color: var(--orange-primary);
 }
 
 .dropdown-button.logout {
-    color: #dc3545;
+    color: var(--error);
 }
 
 .dropdown-button.logout:hover {
-    background-color: #ffeaec;
+    background-color: rgba(255, 51, 51, 0.1);
 }
