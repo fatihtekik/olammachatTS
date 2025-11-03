@@ -5,14 +5,15 @@
 
 import sys
 import os
+from pathlib import Path
 
-# Добавляем путь к backend в PYTHONPATH
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Добавляем корневую директорию backend в путь
+backend_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(backend_dir))
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from app.database.db import SQLALCHEMY_DATABASE_URL, engine, SessionLocal
+from app.database.db import SQLALCHEMY_DATABASE_URL, SessionLocal
 from app.models.match import Match, MatchSet, PlayerTrigger
+from datetime import datetime, timedelta
 
 def reset_matches():
     """Удаляет все матчи из базы данных"""
@@ -20,9 +21,7 @@ def reset_matches():
     print("🔄 Начинаем очистку матчей...")
     
     try:
-        # Используем существующую конфигурацию базы данных
-        database_url = SQLALCHEMY_DATABASE_URL
-        print(f"📊 Подключение к базе данных: {database_url}")
+        print(f"📊 Подключение к базе данных: {SQLALCHEMY_DATABASE_URL}")
         
         # Используем существующую сессию
         db = SessionLocal()
@@ -113,11 +112,7 @@ def reset_matches_keep_recent(days: int = 7):
     print(f"🔄 Начинаем очистку старых матчей (старше {days} дней)...")
     
     try:
-        from datetime import datetime, timedelta
-        
-        # Используем существующую конфигурацию базы данных
-        database_url = SQLALCHEMY_DATABASE_URL
-        print(f"📊 Подключение к базе данных: {database_url}")
+        print(f"📊 Подключение к базе данных: {SQLALCHEMY_DATABASE_URL}")
         
         # Используем существующую сессию
         db = SessionLocal()
@@ -211,8 +206,8 @@ if __name__ == "__main__":
             reset_matches_keep_recent(days)
         except ValueError:
             print("\n❌ Ошибка: Укажите количество дней числом")
-            print("Использование: python reset_matches.py [дни]")
-            print("Пример: python reset_matches.py 30  # Удалить матчи старше 30 дней")
+            print("Использование: python database_tools/reset_matches.py [дни]")
+            print("Пример: python database_tools/reset_matches.py 30  # Удалить матчи старше 30 дней")
             sys.exit(1)
     else:
         print("\nРежим: Полная очистка всех матчей")
