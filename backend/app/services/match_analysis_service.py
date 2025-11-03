@@ -285,11 +285,12 @@ class MatchAnalysisService:
             return int(left), int(right)
         
         def safe_int(val):
-            """Безопасное преобразование в int"""
+            """Безопасное преобразование в int (поддерживает float строки типа '8.0')"""
             if val is None or str(val).strip() == '':
                 return None
             try:
-                return int(val)
+                # Сначала в float, потом в int - чтобы обработать "8.0"
+                return int(float(val))
             except (ValueError, TypeError):
                 return None
 
@@ -304,11 +305,18 @@ class MatchAnalysisService:
             p1_score = safe_int(p1_score_field)
             p2_score = safe_int(p2_score_field)
             
+            # Логируем для отладки
+            if p1_score is None or p2_score is None:
+                if i <= 3:  # Первые 3 сета - это проблема
+                    msg = f"   ⚠️ Сет {i}: p1={p1_score_field}, p2={p2_score_field} (не число)"
+                    print(msg)
+                    log_match_analysis(msg)
+            
             if p1_score is not None and p2_score is not None:
                 per_set_scores.append((p1_score, p2_score))
         
         if per_set_scores:
-            msg = f"   🎾 Детальные сеты из колонок: {per_set_scores}"
+            msg = f"   🎾 Детальные сеты из колонок ({len(per_set_scores)}): {per_set_scores}"
             print(msg)
             log_match_analysis(msg)
         
@@ -333,8 +341,20 @@ class MatchAnalysisService:
         sets_player1 = None
         sets_player2 = None
         
-        # ПРИОРИТЕТ 1: Используем новые поля "Счет матча игрока 1/2" если есть
-        if hasattr(data, 'счет_матча_игрока_1') and data.счет_матча_игрока_1:
+        # ПРИОРИТЕТ 1: Берём из raw_score (поле "Счёт" в экселе) - это ИСТОЧНИК ИСТИНЫ!
+        if raw_score and ':' in raw_score:
+            try:
+                score_parts = raw_score.strip().split(':')
+                sets_player1 = int(score_parts[0])
+                sets_player2 = int(score_parts[1])
+                msg = f"   📊 Счёт из поля Score (истина): {sets_player1}:{sets_player2}"
+                print(msg)
+                log_match_analysis(msg)
+            except Exception as e:
+                print(f"⚠️ Не удалось распарсить score '{raw_score}': {e}")
+        
+        # ПРИОРИТЕТ 2: Используем новые поля "Счет матча игрока 1/2" если нет raw_score
+        if sets_player1 is None and hasattr(data, 'счет_матча_игрока_1') and data.счет_матча_игрока_1:
             s1 = safe_int(data.счет_матча_игрока_1)
             s2 = safe_int(data.счет_матча_игрока_2)
             if s1 is not None and s2 is not None:
@@ -344,7 +364,7 @@ class MatchAnalysisService:
                 print(msg)
                 log_match_analysis(msg)
         
-        # ПРИОРИТЕТ 2: Подсчитываем из детальных сетов
+        # ПРИОРИТЕТ 3: Подсчитываем из детальных сетов (последний вариант)
         if sets_player1 is None and per_set_scores:
             sets_player1 = sum(1 for p1, p2 in per_set_scores if p1 > p2)
             sets_player2 = sum(1 for p1, p2 in per_set_scores if p2 > p1)
@@ -352,17 +372,10 @@ class MatchAnalysisService:
             print(msg)
             log_match_analysis(msg)
 
-        # ПРИОРИТЕТ 3: Если не удалось подсчитать, берём из общего счёта (старый формат)
+        # Если всё плохо, ставим 0:0
         if sets_player1 is None or sets_player2 is None:
-            try:
-                a, b = parse_pair(overall_part)
-                sets_player1, sets_player2 = a, b
-                msg = f"   📊 Счёт из overall_part (старый формат): {sets_player1}:{sets_player2}"
-                print(msg)
-                log_match_analysis(msg)
-            except Exception as e:
-                sets_player1, sets_player2 = 0, 0
-                print(f"⚠️ Не удалось распарсить общий счёт '{raw_score}': {e}")
+            sets_player1, sets_player2 = 0, 0
+            print(f"⚠️ Не удалось определить счёт, используем 0:0")
 
         # 5) Определяем победителя по сетам
         if sets_player1 > sets_player2:
@@ -944,6 +957,19 @@ class MatchAnalysisService:
 
             # Добавляем каждый триггер в результат, но AI-анализ общий для игрока
             for trigger in player_triggers:
+                # Извлекаем доказательства для конкретного триггера
+                trigger_evidence = self._extract_trigger_evidence(
+                    player, 
+                    trigger.trigger_type,
+                    self.db.query(Match).filter(
+                        and_(
+                            Match.date >= start_date,
+                            Match.date <= end_date,
+                            or_(Match.player1_id == player.id, Match.player2_id == player.id)
+                        )
+                    ).order_by(Match.date.desc()).all()
+                )
+                
                 trigger_dict = {
                     "id": trigger.id,
                     "player_id": trigger.player_id,
@@ -959,7 +985,8 @@ class MatchAnalysisService:
                     "trigger_metadata": trigger.trigger_metadata,
                     "created_at": trigger.created_at,
                     "player_stats": player_stats if player_stats else None,
-                    "ai_analysis": ai_text  # один AI-анализ на игрока
+                    "ai_analysis": ai_text,  # один AI-анализ на игрока
+                    "evidence": trigger_evidence  # НОВОЕ: доказательства триггера
                 }
                 result.append(trigger_dict)
 
@@ -1619,60 +1646,54 @@ class MatchAnalysisService:
     async def _analyze_won_2_lost_3rd_set( #РАБОТАЕТ
     self, player: Player, matches: List[Match], start_date: date, end_date: date
 ) -> List[PlayerTrigger]:
-        """Анализ случаев, когда игрок выиграл первые 2 сета, но проиграл 3-й сет"""
+        """Анализ случаев, когда игрок ВЕЛ 2:0 ПО СЕТАМ, но ПРОИГРАЛ МАТЧ 2:3"""
         triggers = []
 
         for match in matches:
             if not (start_date <= match.date <= end_date):
                 continue
 
-            # Получаем все сеты матча, отсортированные по номеру
-            sets = sorted(
-                self.db.query(MatchSet).filter(MatchSet.match_id == match.id).all(),
-                key=lambda s: s.set_number
-            )
+            # Проверяем только проигранные матчи
+            if match.winner_id == player.id:
+                continue
 
-            if len(sets) < 3:
-                continue  # Триггер нужен только если есть хотя бы 3 сета
+            # Определяем счет игрока по сетам
+            is_player1 = match.player1_id == player.id
+            player_sets = match.sets_player1 if is_player1 else match.sets_player2
+            opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
 
-            # Определяем, кто первый и второй игрок в таблице MatchSet
-            first_player_sets = []
-            second_player_sets = []
-            for s in sets:
-                if s.match.player1_id == player.id:
-                    first_player_sets.append(s.player1_points)
-                    second_player_sets.append(s.player2_points)
-                else:
-                    first_player_sets.append(s.player2_points)
-                    second_player_sets.append(s.player1_points)
-
-            # Проверяем первые 3 сета
-            first_set_won = first_player_sets[0] > second_player_sets[0]
-            second_set_won = first_player_sets[1] > second_player_sets[1]
-            third_set_won = first_player_sets[2] > second_player_sets[2]
-
-            # Срабатывание триггера: первые два выиграны, третий проигран
-            if first_set_won and second_set_won and not third_set_won:
-                trigger = PlayerTrigger(
-                    player_id=player.id,
-                    trigger_type="won_2_lost_3rd_set",
-                    trigger_subtype="decisive_set_problems",
-                    trigger_value=f"Выиграл первые 2 сета, но проиграл 3-й в матче {match.id}",
-                    severity_level=2,
-                    period_start=start_date,
-                    period_end=end_date,
-                    is_active=True
+            # ТРИГГЕР: Вел 2:0, проиграл 2:3
+            if player_sets == 2 and opponent_sets == 3:
+                # Получаем все сеты матча
+                sets = sorted(
+                    self.db.query(MatchSet).filter(MatchSet.match_id == match.id).all(),
+                    key=lambda s: s.set_number
                 )
-                trigger.set_metadata({
-                    "match_id": match.id,
-                    "first_set": first_player_sets[0:1],
-                    "second_set": first_player_sets[1:2],
-                    "third_set": first_player_sets[2:3],
-                    "recommendation": "Проблемы с концентрацией в решающих сетах. Требуется психологическая работа"
-                })
 
-                self.db.add(trigger)
-                triggers.append(trigger)
+                if len(sets) >= 3:
+                    # Проверяем что первые 2 сета выиграл
+                    first_set_won = sets[0].winner_id == player.id
+                    second_set_won = sets[1].winner_id == player.id
+
+                    if first_set_won and second_set_won:
+                        trigger = PlayerTrigger(
+                            player_id=player.id,
+                            trigger_type="won_2_lost_3rd_set",
+                            trigger_subtype="led_2_0_lost_match",
+                            trigger_value=f"Вел 2:0 по сетам, но проиграл матч 2:3 ({match.id})",
+                            severity_level=3,  # Высокая серьезность!
+                            period_start=start_date,
+                            period_end=end_date,
+                            is_active=True
+                        )
+                        trigger.set_metadata({
+                            "match_id": match.id,
+                            "final_score": f"{player_sets}:{opponent_sets}",
+                            "recommendation": "КРИТИЧНО: Неспособность довести победу до конца. Психологический срыв после лидерства 2:0"
+                        })
+
+                        self.db.add(trigger)
+                        triggers.append(trigger)
 
         self.db.commit()
         return triggers
@@ -2146,7 +2167,7 @@ class MatchAnalysisService:
                         trigger_matches.append(match)
         
         elif trigger.trigger_type == "won_2_lost_3rd_set":
-            # Показываем матчи где выиграл 2 сета, но проиграл 3-й
+            # Показываем матчи где выиграл 2 сета, но проиграл матч 2:3
             for match in base_matches:
                 if match.player1_id == player.id:
                     player_sets = match.sets_player1 or 0
@@ -2155,7 +2176,7 @@ class MatchAnalysisService:
                     player_sets = match.sets_player2 or 0
                     opponent_sets = match.sets_player1 or 0
                 
-                if player_sets == 2 and opponent_sets == 1 and match.winner_id != player.id:
+                if player_sets == 2 and opponent_sets == 3:
                     trigger_matches.append(match)
         
         elif trigger.trigger_type == "losing_streaks":
@@ -2210,6 +2231,599 @@ class MatchAnalysisService:
         
         return trigger_matches[:10]  # Ограничиваем 10 матчами для читаемости
     
+    def _analyze_opponent_strength(self, player: Player, matches: List[Match]) -> Dict:
+        """Анализирует результаты против соперников разной силы"""
+        strong_opp = {"matches": 0, "wins": 0}  # Соперник сильнее на 200+
+        equal_opp = {"matches": 0, "wins": 0}   # Соперник ±200
+        weak_opp = {"matches": 0, "wins": 0}    # Соперник слабее на 200+
+        
+        for match in matches:
+            opponent_id = match.player2_id if match.player1_id == player.id else match.player1_id
+            opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+            
+            if not opponent or not opponent.current_rating or not player.current_rating:
+                continue
+            
+            rating_diff = player.current_rating - opponent.current_rating
+            won = match.winner_id == player.id
+            
+            if rating_diff <= -200:  # Соперник сильнее
+                strong_opp["matches"] += 1
+                if won: strong_opp["wins"] += 1
+            elif -200 < rating_diff < 200:  # Примерно равные
+                equal_opp["matches"] += 1
+                if won: equal_opp["wins"] += 1
+            else:  # Соперник слабее
+                weak_opp["matches"] += 1
+                if won: weak_opp["wins"] += 1
+        
+        return {
+            "strong": {
+                "matches": strong_opp["matches"],
+                "wins": strong_opp["wins"],
+                "winrate": (strong_opp["wins"] / strong_opp["matches"] * 100) if strong_opp["matches"] > 0 else 0
+            },
+            "equal": {
+                "matches": equal_opp["matches"],
+                "wins": equal_opp["wins"],
+                "winrate": (equal_opp["wins"] / equal_opp["matches"] * 100) if equal_opp["matches"] > 0 else 0
+            },
+            "weak": {
+                "matches": weak_opp["matches"],
+                "wins": weak_opp["wins"],
+                "winrate": (weak_opp["wins"] / weak_opp["matches"] * 100) if weak_opp["matches"] > 0 else 0
+            }
+        }
+    
+    def _analyze_time_of_day_performance(self, player: Player, matches: List[Match]) -> Dict:
+        """Анализирует результаты по времени суток"""
+        time_stats = {
+            "morning": {"matches": 0, "wins": 0},    # 6-12
+            "day": {"matches": 0, "wins": 0},        # 12-18
+            "evening": {"matches": 0, "wins": 0},    # 18-22
+            "night": {"matches": 0, "wins": 0}       # 22-6
+        }
+        
+        for match in matches:
+            if not match.time:
+                continue
+            
+            hour = match.time.hour if isinstance(match.time, datetime) else int(match.time.split(':')[0]) if isinstance(match.time, str) else None
+            if hour is None:
+                continue
+            
+            won = match.winner_id == player.id
+            
+            if 6 <= hour < 12:
+                period = "morning"
+            elif 12 <= hour < 18:
+                period = "day"
+            elif 18 <= hour < 22:
+                period = "evening"
+            else:
+                period = "night"
+            
+            time_stats[period]["matches"] += 1
+            if won:
+                time_stats[period]["wins"] += 1
+        
+        result = {}
+        for period, stats in time_stats.items():
+            result[period] = {
+                "matches": stats["matches"],
+                "wins": stats["wins"],
+                "winrate": (stats["wins"] / stats["matches"] * 100) if stats["matches"] > 0 else 0
+            }
+        
+        return result
+    
+    def _analyze_serve_receive_efficiency(self, player: Player, matches: List[Match]) -> Dict:
+        """Анализирует эффективность подачи и приёма"""
+        serve_total = []
+        receive_total = []
+        serve_wins = []
+        receive_wins = []
+        serve_losses = []
+        receive_losses = []
+        
+        for match in matches:
+            won = match.winner_id == player.id
+            
+            # Получаем эффективность из матча (правильные имена полей!)
+            if match.player1_id == player.id:
+                serve_eff = match.serve_efficiency_p1
+                receive_eff = match.receive_efficiency_p1
+            else:
+                serve_eff = match.serve_efficiency_p2
+                receive_eff = match.receive_efficiency_p2
+            
+            if serve_eff is not None:
+                serve_total.append(serve_eff)
+                if won:
+                    serve_wins.append(serve_eff)
+                else:
+                    serve_losses.append(serve_eff)
+            
+            if receive_eff is not None:
+                receive_total.append(receive_eff)
+                if won:
+                    receive_wins.append(receive_eff)
+                else:
+                    receive_losses.append(receive_eff)
+        
+        return {
+            "serve": {
+                "avg": sum(serve_total) / len(serve_total) if serve_total else 0,
+                "in_wins": sum(serve_wins) / len(serve_wins) if serve_wins else 0,
+                "in_losses": sum(serve_losses) / len(serve_losses) if serve_losses else 0
+            },
+            "receive": {
+                "avg": sum(receive_total) / len(receive_total) if receive_total else 0,
+                "in_wins": sum(receive_wins) / len(receive_wins) if receive_wins else 0,
+                "in_losses": sum(receive_losses) / len(receive_losses) if receive_losses else 0
+            }
+        }
+    
+    def _analyze_favorite_underdog_performance(self, player: Player, matches: List[Match]) -> Dict:
+        """Анализирует игру в роли фаворита и аутсайдера"""
+        favorite_stats = {"matches": 0, "wins": 0}
+        underdog_stats = {"matches": 0, "wins": 0}
+        
+        for match in matches:
+            opponent_id = match.player2_id if match.player1_id == player.id else match.player1_id
+            opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+            
+            if not opponent or not opponent.current_rating or not player.current_rating:
+                continue
+            
+            won = match.winner_id == player.id
+            is_favorite = player.current_rating > opponent.current_rating
+            
+            if is_favorite:
+                favorite_stats["matches"] += 1
+                if won: favorite_stats["wins"] += 1
+            else:
+                underdog_stats["matches"] += 1
+                if won: underdog_stats["wins"] += 1
+        
+        return {
+            "favorite": {
+                "matches": favorite_stats["matches"],
+                "wins": favorite_stats["wins"],
+                "winrate": (favorite_stats["wins"] / favorite_stats["matches"] * 100) if favorite_stats["matches"] > 0 else 0
+            },
+            "underdog": {
+                "matches": underdog_stats["matches"],
+                "wins": underdog_stats["wins"],
+                "winrate": (underdog_stats["wins"] / underdog_stats["matches"] * 100) if underdog_stats["matches"] > 0 else 0
+            }
+        }
+
+    def _extract_trigger_evidence(self, player: Player, trigger_type: str, matches: List[Match]) -> List[Dict]:
+        """
+        Извлекает конкретные матчи-доказательства для триггера.
+        Возвращает список матчей с подсветкой ключевых моментов и детальной информацией о сетах.
+        """
+        evidence = []
+        
+        if trigger_type in ['led_2_sets_lost_match', 'won_2_lost_3rd_set', 'led_2_sets_lost']:
+            # ТРИГГЕР: Вел 2:0 по сетам, но ПРОИГРАЛ МАТЧ 2:3
+            for match in matches:
+                is_player1 = match.player1_id == player.id
+                player_sets = match.sets_player1 if is_player1 else match.sets_player2
+                opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+                
+                if player_sets == 2 and opponent_sets == 3:
+                    opponent_id = match.player2_id if is_player1 else match.player1_id
+                    opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+                    
+                    serve_eff = match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2
+                    receive_eff = match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2
+                    was_favorite = player.current_rating > opponent.current_rating if opponent else False
+                    rating_diff = player.current_rating - opponent.current_rating if opponent else 0
+                    
+                    match_sets = self.db.query(MatchSet).filter(
+                        MatchSet.match_id == match.id
+                    ).order_by(MatchSet.set_number).all()
+                    
+                    sets_details = []
+                    for set_data in match_sets:
+                        player_points = set_data.player1_points if is_player1 else set_data.player2_points
+                        opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
+                        won_set = set_data.winner_id == player.id
+                        sets_details.append({
+                            'set_number': set_data.set_number,
+                            'player_points': player_points,
+                            'opponent_points': opponent_points,
+                            'won': won_set
+                        })
+                    
+                    evidence.append({
+                        'date': match.date.strftime('%d.%m.%Y'),
+                        'time': match.time.strftime('%H:%M') if match.time else None,
+                        'opponent': opponent.full_name if opponent else 'Неизвестный',
+                        'opponent_rating': opponent.current_rating if opponent else None,
+                        'score': f"{player_sets}:{opponent_sets}",
+                        'sets': sets_details,
+                        'highlight': 'Вел 2:0, проиграл 2:3',
+                        'serve_efficiency': serve_eff,
+                        'receive_efficiency': receive_eff,
+                        'was_favorite': was_favorite,
+                        'rating_diff': rating_diff,
+                        'red_flags': self._identify_match_red_flags(match, player, is_player1)
+                    })
+        
+        elif trigger_type in ['weaker_opponent_losses', 'loses_to_weaker']:
+            # ТРИГГЕР: Поражения от слабых
+            for match in matches:
+                if match.winner_id == player.id:
+                    continue
+                    
+                is_player1 = match.player1_id == player.id
+                opponent_id = match.player2_id if is_player1 else match.player1_id
+                opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+                
+                if not opponent or not opponent.current_rating or not player.current_rating:
+                    continue
+                
+                rating_diff = player.current_rating - opponent.current_rating
+                
+                # Только если соперник слабее на 200+ рейтинга
+                if rating_diff >= 200:
+                    player_sets = match.sets_player1 if is_player1 else match.sets_player2
+                    opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+                    
+                    serve_eff = match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2
+                    receive_eff = match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2
+                    
+                    # Загружаем сеты матча
+                    match_sets = self.db.query(MatchSet).filter(
+                        MatchSet.match_id == match.id
+                    ).order_by(MatchSet.set_number).all()
+                    
+                    # Формируем детальную информацию о сетах
+                    sets_details = []
+                    for set_data in match_sets:
+                        player_points = set_data.player1_points if is_player1 else set_data.player2_points
+                        opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
+                        won_set = set_data.winner_id == player.id
+                        sets_details.append({
+                            'set_number': set_data.set_number,
+                            'player_points': player_points,
+                            'opponent_points': opponent_points,
+                            'won': won_set
+                        })
+                    
+                    evidence.append({
+                        'date': match.date.strftime('%d.%m.%Y'),
+                        'time': match.time.strftime('%H:%M') if match.time else None,
+                        'opponent': opponent.full_name,
+                        'opponent_rating': opponent.current_rating,
+                        'score': f"{player_sets}:{opponent_sets}",
+                        'sets': sets_details,
+                        'highlight': f'Проиграл слабому (-{rating_diff} рейтинга)',
+                        'serve_efficiency': serve_eff,
+                        'receive_efficiency': receive_eff,
+                        'was_favorite': True,
+                        'rating_diff': rating_diff,
+                        'red_flags': self._identify_match_red_flags(match, player, is_player1)
+                    })
+        
+        elif trigger_type in ['defeat_0_3', 'shutout_losses']:
+            # ТРИГГЕР: Поражения 0:3
+            for match in matches:
+                if match.winner_id == player.id:
+                    continue
+                    
+                is_player1 = match.player1_id == player.id
+                player_sets = match.sets_player1 if is_player1 else match.sets_player2
+                opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+                
+                if player_sets == 0 and opponent_sets == 3:
+                    opponent_id = match.player2_id if is_player1 else match.player1_id
+                    opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+                    
+                    rating_diff = player.current_rating - opponent.current_rating if opponent and opponent.current_rating else 0
+                    
+                    # Загружаем сеты матча
+                    match_sets = self.db.query(MatchSet).filter(
+                        MatchSet.match_id == match.id
+                    ).order_by(MatchSet.set_number).all()
+                    
+                    # Формируем детальную информацию о сетах
+                    sets_details = []
+                    for set_data in match_sets:
+                        player_points = set_data.player1_points if is_player1 else set_data.player2_points
+                        opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
+                        won_set = set_data.winner_id == player.id
+                        sets_details.append({
+                            'set_number': set_data.set_number,
+                            'player_points': player_points,
+                            'opponent_points': opponent_points,
+                            'won': won_set
+                        })
+                    
+                    evidence.append({
+                        'date': match.date.strftime('%d.%m.%Y'),
+                        'time': match.time.strftime('%H:%M') if match.time else None,
+                        'opponent': opponent.full_name if opponent else 'Неизвестный',
+                        'opponent_rating': opponent.current_rating if opponent else None,
+                        'score': f"{player_sets}:{opponent_sets}",
+                        'sets': sets_details,
+                        'highlight': 'Сухое поражение 0:3',
+                        'serve_efficiency': match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2,
+                        'receive_efficiency': match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2,
+                        'was_favorite': rating_diff > 0,
+                        'rating_diff': rating_diff,
+                        'red_flags': self._identify_match_red_flags(match, player, is_player1)
+                    })
+        
+        elif trigger_type in ['losing_streaks']:
+            # ТРИГГЕР: Проигрыши в ряд
+            consecutive_losses = []
+            for match in matches:
+                if match.winner_id != player.id and match.winner_id is not None:
+                    consecutive_losses.append(match)
+                else:
+                    break  # Серия прервалась
+            
+            # Берем последние N поражений подряд
+            for match in consecutive_losses[:10]:  # Максимум 10
+                is_player1 = match.player1_id == player.id
+                opponent_id = match.player2_id if is_player1 else match.player1_id
+                opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+                
+                player_sets = match.sets_player1 if is_player1 else match.sets_player2
+                opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+                
+                rating_diff = player.current_rating - opponent.current_rating if opponent and opponent.current_rating else 0
+                
+                # Загружаем сеты матча
+                match_sets = self.db.query(MatchSet).filter(
+                    MatchSet.match_id == match.id
+                ).order_by(MatchSet.set_number).all()
+                
+                # Формируем детальную информацию о сетах
+                sets_details = []
+                for set_data in match_sets:
+                    player_points = set_data.player1_points if is_player1 else set_data.player2_points
+                    opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
+                    won_set = set_data.winner_id == player.id
+                    sets_details.append({
+                        'set_number': set_data.set_number,
+                        'player_points': player_points,
+                        'opponent_points': opponent_points,
+                        'won': won_set
+                    })
+                
+                evidence.append({
+                    'date': match.date.strftime('%d.%m.%Y'),
+                    'time': match.time.strftime('%H:%M') if match.time else None,
+                    'opponent': opponent.full_name if opponent else 'Неизвестный',
+                    'opponent_rating': opponent.current_rating if opponent else None,
+                    'score': f"{player_sets}:{opponent_sets}",
+                    'sets': sets_details,
+                    'highlight': f'Поражение #{len(evidence)+1} в серии',
+                    'serve_efficiency': match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2,
+                    'receive_efficiency': match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2,
+                    'was_favorite': rating_diff > 0,
+                    'rating_diff': rating_diff,
+                    'red_flags': self._identify_match_red_flags(match, player, is_player1)
+                })
+        
+        elif trigger_type in ['time_performance', 'night_performance']:
+            # ТРИГГЕР: Ночные матчи
+            for match in matches:
+                if not match.time:
+                    continue
+                    
+                hour = match.time.hour
+                if hour < 22 and hour >= 6:  # Только ночные матчи
+                    continue
+                
+                is_player1 = match.player1_id == player.id
+                won = match.winner_id == player.id
+                
+                if won:  # Показываем только поражения ночью
+                    continue
+                
+                opponent_id = match.player2_id if is_player1 else match.player1_id
+                opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+                
+                player_sets = match.sets_player1 if is_player1 else match.sets_player2
+                opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+                
+                # Загружаем сеты матча
+                match_sets = self.db.query(MatchSet).filter(
+                    MatchSet.match_id == match.id
+                ).order_by(MatchSet.set_number).all()
+                
+                # Формируем детальную информацию о сетах
+                sets_details = []
+                for set_data in match_sets:
+                    player_points = set_data.player1_points if is_player1 else set_data.player2_points
+                    opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
+                    won_set = set_data.winner_id == player.id
+                    sets_details.append({
+                        'set_number': set_data.set_number,
+                        'player_points': player_points,
+                        'opponent_points': opponent_points,
+                        'won': won_set
+                    })
+                
+                rating_diff = player.current_rating - opponent.current_rating if opponent and opponent.current_rating else 0
+                
+                evidence.append({
+                    'date': match.date.strftime('%d.%m.%Y'),
+                    'time': match.time.strftime('%H:%M'),
+                    'opponent': opponent.full_name if opponent else 'Неизвестный',
+                    'opponent_rating': opponent.current_rating if opponent else None,
+                    'score': f"{player_sets}:{opponent_sets}",
+                    'sets': sets_details,
+                    'highlight': f'Ночной матч ({hour}:00 - подозрительное время)',
+                    'serve_efficiency': match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2,
+                    'receive_efficiency': match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2,
+                    'was_favorite': rating_diff > 0,
+                    'rating_diff': rating_diff,
+                    'red_flags': self._identify_match_red_flags(match, player, is_player1)
+                })
+        
+        # Ограничиваем до 10 самых свежих доказательств
+        return evidence[:10]
+    
+    def _identify_match_red_flags(self, match: Match, player: Player, is_player1: bool) -> List[str]:
+        """
+        Выявляет подтриггеры/аномалии в конкретном матче
+        """
+        flags = []
+        
+        # Получаем данные игрока
+        serve_eff = match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2
+        receive_eff = match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2
+        player_sets = match.sets_player1 if is_player1 else match.sets_player2
+        opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+        
+        # Подтриггер 1: Критически низкая подача
+        if serve_eff is not None and serve_eff < 0.40:
+            flags.append(f"Низкая подача ({serve_eff*100:.0f}%)")
+        
+        # Подтриггер 2: Критически низкий прием
+        if receive_eff is not None and receive_eff < 0.35:
+            flags.append(f"Низкий прием ({receive_eff*100:.0f}%)")
+        
+        # Подтриггер 3: Коллапс после лидерства 2:0
+        if player_sets == 2 and opponent_sets == 3:
+            flags.append("Коллапс 2:3")
+        
+        # Подтриггер 4: Сухое поражение
+        if player_sets == 0 and opponent_sets == 3:
+            flags.append("Поражение 0:3")
+        
+        # Подтриггер 5: Ночное время (22:00-06:00)
+        if match.time:
+            hour = match.time.hour
+            if hour >= 22 or hour < 6:
+                flags.append(f"Ночной матч ({match.time.strftime('%H:%M')})")
+            # Подтриггер 6: Раннее утро (06:00-09:00)
+            elif 6 <= hour < 9:
+                flags.append(f"Ранний матч ({match.time.strftime('%H:%M')})")
+        
+        # Подтриггер 7: Очень низкая комбинированная эффективность
+        if serve_eff is not None and receive_eff is not None:
+            combined = (serve_eff + receive_eff) / 2
+            if combined < 0.35:
+                flags.append(f"Общая эффективность {combined*100:.0f}%")
+        
+        return flags
+
+    def _calculate_collapse_rate(self, player: Player, matches: List[Match]) -> float:
+        """
+        Рассчитывает процент матчей, где игрок вел 2:0 по сетам и проиграл.
+        Это один из ключевых индикаторов потенциального мошенничества.
+        """
+        collapses = 0
+        lead_situations = 0
+        
+        for match in matches:
+            is_player1 = match.player1_id == player.id
+            
+            # Получаем количество сетов
+            player_sets = match.sets_player1 if is_player1 else match.sets_player2
+            opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+            
+            if player_sets is None or opponent_sets is None:
+                continue
+            
+            # Проверяем ситуацию лидерства 2:0
+            # Если игрок выиграл 2 сета, но проиграл матч (противник выиграл 3)
+            if player_sets == 2 and opponent_sets == 3:
+                lead_situations += 1
+                collapses += 1
+            # Если игрок выиграл 2+ сета и в итоге выиграл - это НЕ коллапс
+            elif player_sets >= 2 and match.winner_id == player.id:
+                lead_situations += 1
+        
+        return (collapses / lead_situations * 100) if lead_situations > 0 else 0
+    
+    def _calculate_serve_efficiency_variance(self, player: Player, matches: List[Match]) -> float:
+        """
+        Рассчитывает стандартное отклонение эффективности подачи.
+        Высокая волатильность может указывать на непредсказуемое поведение.
+        """
+        import numpy as np
+        
+        serve_efficiencies = []
+        
+        for match in matches:
+            is_player1 = match.player1_id == player.id
+            serve_eff = match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2
+            
+            if serve_eff is not None:
+                serve_efficiencies.append(serve_eff)
+        
+        if len(serve_efficiencies) < 3:
+            return 0.0
+        
+        return float(np.std(serve_efficiencies))
+    
+    def _calculate_suspicion_score(self, player_stats: Dict) -> float:
+        """
+        Вычисляет общий балл подозрительности игрока (0-1).
+        
+        Использует взвешенную сумму различных индикаторов:
+        - Поражения от слабых соперников (25%)
+        - Коллапсы после лидерства 2:0 (30%)
+        - Волатильность эффективности подачи (20%)
+        - Временные аномалии (день/ночь) (15%)
+        - Разница в игре фаворит/андердог (10%)
+        
+        Returns:
+            float: Балл от 0 до 1, где 1 = максимально подозрительно
+        """
+        score = 0.0
+        
+        # 1. Поражения от слабых соперников (вес 0.25)
+        opponent_analysis = player_stats.get('opponent_analysis', {})
+        vs_weaker = opponent_analysis.get('vs_weaker', {})
+        vs_weaker_winrate = vs_weaker.get('winrate', 100) / 100  # нормализуем в [0, 1]
+        
+        if vs_weaker_winrate < 0.50:  # винрейт против слабых < 50%
+            # Чем ниже винрейт против слабых, тем подозрительнее
+            score += 0.25 * (1 - vs_weaker_winrate)
+        
+        # 2. Коллапсы после лидерства (вес 0.30) - САМЫЙ ВАЖНЫЙ ИНДИКАТОР
+        collapse_rate = player_stats.get('collapse_rate', 0) / 100  # нормализуем
+        score += 0.30 * collapse_rate
+        
+        # 3. Волатильность эффективности подачи (вес 0.20)
+        serve_variance = player_stats.get('serve_efficiency_variance', 0)
+        if serve_variance > 0.20:  # стандартное отклонение > 20%
+            # Нормализуем к 50% как максимум
+            normalized_variance = min(serve_variance / 0.5, 1.0)
+            score += 0.20 * normalized_variance
+        
+        # 4. Временные аномалии - разница день/ночь (вес 0.15)
+        time_performance = player_stats.get('time_performance', {})
+        night_wr = time_performance.get('night', {}).get('winrate', 50) / 100
+        day_wr = time_performance.get('day', {}).get('winrate', 50) / 100
+        time_diff = abs(night_wr - day_wr)
+        
+        if time_diff > 0.30:  # разница > 30%
+            score += 0.15 * (time_diff / 0.5)  # нормализуем к 50% как максимум
+        
+        # 5. Разница в роли фаворит/андердог (вес 0.10)
+        role_performance = player_stats.get('role_performance', {})
+        favorite_wr = role_performance.get('favorite', {}).get('winrate', 50) / 100
+        underdog_wr = role_performance.get('underdog', {}).get('winrate', 50) / 100
+        
+        if favorite_wr > 0 and underdog_wr > 0:
+            role_gap = abs(favorite_wr - underdog_wr)
+            if role_gap > 0.40:  # разница > 40%
+                score += 0.10 * (role_gap / 0.6)  # нормализуем к 60% как максимум
+        
+        # Ограничиваем результат [0, 1]
+        return min(score, 1.0)
+
     def _get_player_stats_for_trigger(self, player_id: str, start_date: date, end_date: date) -> dict:
         """Получает статистику игрока для триггера, включая форму и последние матчи"""
         player = self.db.query(Player).filter(Player.id == player_id).first()
@@ -2283,17 +2897,69 @@ class MatchAnalysisService:
                 sets_lost += match.sets_player1 or 0
         
         win_rate = (wins / len(matches)) * 100 if matches else 0
+        set_win_rate = (sets_won / (sets_won + sets_lost) * 100) if (sets_won + sets_lost) > 0 else 0
         
-        return {
+        # НОВОЕ: Расширенный анализ
+        opponent_analysis = self._analyze_opponent_strength(player, matches)
+        time_performance = self._analyze_time_of_day_performance(player, matches)
+        serve_receive = self._analyze_serve_receive_efficiency(player, matches)
+        role_performance = self._analyze_favorite_underdog_performance(player, matches)
+        
+        # Динамика формы (последние 10 и 20 матчей)
+        last10_wins = len([m for m in matches[:10] if m.winner_id == player.id])
+        last20_wins = len([m for m in matches[:20] if m.winner_id == player.id])
+        last10_winrate = (last10_wins / min(10, len(matches)) * 100) if len(matches) > 0 else 0
+        last20_winrate = (last20_wins / min(20, len(matches)) * 100) if len(matches) > 0 else 0
+        
+        # Определяем тренд
+        if len(matches) >= 20:
+            if last10_winrate > last20_winrate + 10:
+                trend = "улучшается"
+                trend_icon = "↗️"
+            elif last10_winrate < last20_winrate - 10:
+                trend = "ухудшается"
+                trend_icon = "↘️"
+            else:
+                trend = "стабилен"
+                trend_icon = "→"
+        else:
+            trend = "недостаточно данных"
+            trend_icon = "?"
+        
+        # НОВОЕ: Метрики подозрительности
+        collapse_rate = self._calculate_collapse_rate(player, matches)
+        serve_efficiency_variance = self._calculate_serve_efficiency_variance(player, matches)
+        
+        # Формируем полную статистику
+        stats = {
             "matches_played": len(matches),
             "wins": wins,
             "losses": losses,
             "win_rate": win_rate,
             "sets_won": sets_won,
             "sets_lost": sets_lost,
-            "recent_form": ''.join(recent_form),  # ← Преобразуем массив в строку
-            "recent_matches": recent_matches
+            "set_win_rate": set_win_rate,
+            "recent_form": ''.join(recent_form),
+            "recent_matches": recent_matches,
+            # Расширенная статистика
+            "opponent_analysis": opponent_analysis,
+            "time_performance": time_performance,
+            "serve_receive": serve_receive,
+            "role_performance": role_performance,
+            "last10_winrate": last10_winrate,
+            "last20_winrate": last20_winrate,
+            "trend": trend,
+            "trend_icon": trend_icon,
+            # Метрики подозрительности
+            "collapse_rate": collapse_rate,
+            "serve_efficiency_variance": serve_efficiency_variance
         }
+        
+        # Вычисляем общий балл подозрительности
+        suspicion_score = self._calculate_suspicion_score(stats)
+        stats["suspicion_score"] = suspicion_score
+        
+        return stats
 
     async def _generate_ai_analysis(self, player_name: str, trigger_value: str ,  player_stats: Dict, provider: str = "lmstudio") -> str:
         """Генерирует ИИ-анализ для игрока (поддерживает Ollama и LM Studio)"""
@@ -2323,15 +2989,15 @@ class MatchAnalysisService:
             if provider == "lmstudio":
                 # LM Studio использует OpenAI-совместимый API
                 api_url = f"{settings.LM_STUDIO_API_URL}/v1/chat/completions"
-                # Используем выбранную модель или дефолтную
-                model = self._selected_model or "llama3-8b"
+                # Используем GPT-OSS-20B для глубокого анализа мошенничества
+                model = self._selected_model or "gpt-oss-20b"
                 logger.info(f"🔷 Используем LM Studio для AI-анализа: {api_url}")
                 print(f"🔷 API URL: {api_url}")
                 print(f"🔷 Модель: {model}")
             else:
                 # Ollama использует свой формат API
                 api_url = f"{settings.OLLAMA_API_URL}/api/chat"
-                # Используем выбранную модель или дефолтную
+                # Для Ollama используем другую модель (GPT-OSS доступен только в LM Studio)
                 model = self._selected_model or "llama3.1:8b"
                 logger.info(f"🟢 Используем Ollama для AI-анализа: {api_url}")
                 print(f"🟢 API URL: {api_url}")
@@ -2343,14 +3009,46 @@ class MatchAnalysisService:
                 "model": model,
                 "stream": True,
                 "messages": [
-                    {"role": "system", "content": "Ты аналитик по настольному теннису."},
+                    {
+                        "role": "system", 
+                        "content": """Ты аналитик по выявлению мошенничества в профессиональном настольном теннисе.
+
+ТВОЯ МИССИЯ: Обнаружение договорных матчей и намеренных проигрышей на основе статистических аномалий.
+
+ЭКСПЕРТИЗА:
+- Математический анализ паттернов поведения
+- Выявление отклонений от нормального распределения
+- Определение психологических маркеров подставы
+- Анализ технических аномалий (подача/приём)
+
+МЕТОДОЛОГИЯ АНАЛИЗА:
+1. Ищи СТАТИСТИЧЕСКИЕ АНОМАЛИИ (резкие отклонения от средних показателей)
+2. Выявляй ПОДОЗРИТЕЛЬНЫЕ ПАТТЕРНЫ (проигрыши слабым, лидерство→крах)
+3. Оценивай ПСИХОЛОГИЧЕСКИЕ МАРКЕРЫ (таймауты, карточки, эффективность)
+4. Определяй ВЕРОЯТНОСТЬ МОШЕННИЧЕСТВА на основе совокупности факторов
+
+КРАСНЫЕ ФЛАГИ МОШЕННИЧЕСТВА:
+- Проигрыш слабым соперникам (рейтинг -200+) при победах над сильными
+- Системные проигрыши после лидерства 2:0 в сетах
+- Резкое падение эффективности подачи/приёма в критические моменты
+- Аномальное количество таймаутов или их отсутствие
+- Неестественные паттерны баланса в сетах
+
+ФОРМАТ ОТВЕТА (строго 3-4 предложения):
+1) УРОВЕНЬ РИСКА: [НИЗКИЙ/СРЕДНИЙ/ВЫСОКИЙ/КРИТИЧЕСКИЙ]
+2) КЛЮЧЕВЫЕ АНОМАЛИИ: конкретные цифры и отклонения
+3) ПОЧЕМУ ЭТОТ МАТЧ СЛИВАЮТ: какой тип триггеров тебя настораживает (если есть)
+4) РЕКОМЕНДАЦИИ: Статический анализ и сухие цифры на шанс вероятности подставного матча  .
+
+Будь объективным. Используй только факты и цифры. Без домыслов."""
+                    },
                     {"role": "user", "content": prompt}
                 ]
             }
             
             # Добавляем max_tokens для LM Studio (OpenAI API)
             if provider == "lmstudio":
-                request_data["max_tokens"] = self._max_tokens
+                request_data["max_tokens"] = 300  # Увеличено для детального анализа
             
             async with httpx.AsyncClient(timeout=30.0) as client:
                 async with client.stream("POST", api_url, json=request_data) as response:
@@ -2470,8 +3168,8 @@ class MatchAnalysisService:
             return f"💥 Ошибка: {str(e)}"
     
     def _create_analysis_prompt(self, player_name: str, trigger_value: str, player_stats: Dict) -> str:
-        """Создает промпт для ИИ-анализа"""
-        # Пытаемся загрузить RAG данные, если не получается - продолжаем без них
+        """Создает РАСШИРЕННЫЙ промпт для ИИ-анализа с использованием всех доступных данных"""
+        # Пытаемся загрузить RAG данные
         dop_infa = []
         try:
             embeddings, metadata = load_data()
@@ -2479,64 +3177,143 @@ class MatchAnalysisService:
             print(f"✅ RAG: Найдено {len(dop_infa)} релевантных фрагментов")
         except Exception as e:
             print(f"⚠️ RAG недоступен, продолжаем без базы знаний: {e}")
-            # Продолжаем работу без RAG
-        # sorted_triggers = sorted(player_triggers, key=lambda t: t.severity_level or 0, reverse=True)[:8]
-        # trigger_texts = "\n".join([f"- {t.trigger_type}: {t.trigger_value}" for t in sorted_triggers])
-        # # Описания триггеров
-        # trigger_descriptions = {
-        #     "top_performers": "отличные результаты",
-        #     "defeat_0_3": "частые поражения 0:3",
-        #     "won_2_lost_3rd_set": "проигрыш после лидерства 2:0 по сетам",
-        #     "early_final_exit_advanced": "досрочный уход с корта в финалах",
-        #     "led_1_set_lost_match": "проигрыш после лидерства в счёте",
-        #     "led_2_sets_lost_match": "критический проигрыш после лидерства 2:0",
-        #     "psychological_breakdown": "психологические срывы",
-        #     "comeback_inability": "неспособность к камбекам",
-        #     "pressure_situations": "проблемы в важных матчах",
-        #     "losers_50_percent": "низкий процент побед",
-        #     "losing_streaks": "длинные серии поражений",
-        #     "time_performance": "проблемы с выступлениями в определённое время суток",
-        #     "post_holiday_problems": "плохая форма после праздников"
-        # }
         
-        
+        # Извлекаем данные
+        matches = player_stats.get('matches_played', 0)
         wins = player_stats.get('wins', 0)
         losses = player_stats.get('losses', 0)
         win_rate = player_stats.get('win_rate', 0)
-        matches = player_stats.get('matches_played', 0)
+        sets_won = player_stats.get('sets_won', 0)
+        sets_lost = player_stats.get('sets_lost', 0)
+        set_win_rate = player_stats.get('set_win_rate', 0)
         recent_form = player_stats.get('recent_form', '')
         
-        # Формируем промпт с RAG или без
+        # Расширенная статистика
+        opponent_analysis = player_stats.get('opponent_analysis', {})
+        time_performance = player_stats.get('time_performance', {})
+        serve_receive = player_stats.get('serve_receive', {})
+        role_performance = player_stats.get('role_performance', {})
+        last10_winrate = player_stats.get('last10_winrate', 0)
+        last20_winrate = player_stats.get('last20_winrate', 0)
+        trend = player_stats.get('trend', 'неизвестно')
+        trend_icon = player_stats.get('trend_icon', '?')
+        
+        # НОВОЕ: Метрики подозрительности
+        suspicion_score = player_stats.get('suspicion_score', 0)
+        collapse_rate = player_stats.get('collapse_rate', 0)
+        serve_variance = player_stats.get('serve_efficiency_variance', 0)
+        
+        # Определяем уровень риска по suspicion_score
+        if suspicion_score >= 0.7:
+            risk_level = "КРИТИЧЕСКИЙ"
+            risk_emoji = "🔴"
+        elif suspicion_score >= 0.5:
+            risk_level = "ВЫСОКИЙ"
+            risk_emoji = "🟠"
+        elif suspicion_score >= 0.3:
+            risk_level = "СРЕДНИЙ"
+            risk_emoji = "🟡"
+        else:
+            risk_level = "НИЗКИЙ"
+            risk_emoji = "🟢"
+        
+        # Последние матчи
+        recent_matches = player_stats.get('recent_matches', [])
+        recent_matches_text = "\n".join([
+            f"  • {m['date']}: vs {m['opponent']} - {m['result']} ({m['score']}) {m['time'] or ''}"
+            for m in recent_matches[:5]
+        ]) if recent_matches else "Нет данных"
+        
+        # RAG секция
         rag_section = ""
         if dop_infa:
-            rag_texts = [item["text"] for item in dop_infa]
+            rag_texts = [f"  • {item['text']}" for item in dop_infa]
             rag_section = f"""
-Дополнительная информация из базы знаний:
+📚 ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:
 {chr(10).join(rag_texts)}
 """
-        else:
-            rag_section = "(База знаний недоступна)"
         
+        # Формируем расширенный промпт для ДЕТЕКТОРА МОШЕННИЧЕСТВА
         prompt = f"""
+═══════════════════════════════════════
+АНАЛИЗ НА ПРЕДМЕТ ДОГОВОРНЫХ МАТЧЕЙ
 Игрок: {player_name}
+═══════════════════════════════════════
 
-Статистика за период:
-- Матчей сыграно: {matches}
-- Побед: {wins} ({win_rate:.1f}%)
-- Поражений: {losses}
-- Последняя форма: {recent_form}
+⚠️ АВТОМАТИЧЕСКИЙ СКОРИНГ ПОДОЗРИТЕЛЬНОСТИ:
+{risk_emoji} УРОВЕНЬ ПОДОЗРИТЕЛЬНОСТИ: {suspicion_score:.0%} ({risk_level})
 
-Обнаруженные триггеры:
+📋 ДЕТАЛИЗАЦИЯ СКОРИНГА:
+  • Коллапсы после лидерства 2:0: {collapse_rate:.0%}
+  • Волатильность подачи (std): ±{serve_variance:.0%}
+  • Винрейт против слабых: {opponent_analysis.get('weak', {}).get('winrate', 0):.0%}
+  • Разница день/ночь: {abs(time_performance.get('night', {}).get('winrate', 50) - time_performance.get('day', {}).get('winrate', 50)):.0%}п.п.
+  • Разница фаворит/андердог: {abs(role_performance.get('favorite', {}).get('winrate', 0) - role_performance.get('underdog', {}).get('winrate', 0)):.0%}п.п.
+
+📊 БАЗОВАЯ СТАТИСТИКА:
+• Матчей: {matches} | Побед: {wins} ({win_rate:.1f}%) | Поражений: {losses}
+• Форма (последние 5): {recent_form}
+• Сетов: {sets_won}:{sets_lost} ({set_win_rate:.1f}% побед)
+
+🎯 РЕЗУЛЬТАТЫ ПРОТИВ СОПЕРНИКОВ РАЗНОЙ СИЛЫ:
+• Сильнее на 200+ рейтинга: {opponent_analysis.get('strong', {}).get('matches', 0)} матчей → {opponent_analysis.get('strong', {}).get('winrate', 0):.1f}% побед
+• Примерно равные (±200): {opponent_analysis.get('equal', {}).get('matches', 0)} матчей → {opponent_analysis.get('equal', {}).get('winrate', 0):.1f}% побед  
+• Слабее на 200+ рейтинга: {opponent_analysis.get('weak', {}).get('matches', 0)} матчей → {opponent_analysis.get('weak', {}).get('winrate', 0):.1f}% побед
+⚠️ АНОМАЛИЯ: Проверь если винрейт против СЛАБЫХ ниже чем против СИЛЬНЫХ!
+
+⏰ ПРОИЗВОДИТЕЛЬНОСТЬ ПО ВРЕМЕНИ СУТОК:
+• Утро (6-12): {time_performance.get('morning', {}).get('matches', 0)} матчей → {time_performance.get('morning', {}).get('winrate', 0):.1f}% побед
+• День (12-18): {time_performance.get('day', {}).get('matches', 0)} матчей → {time_performance.get('day', {}).get('winrate', 0):.1f}% побед
+• Вечер (18-22): {time_performance.get('evening', {}).get('matches', 0)} матчей → {time_performance.get('evening', {}).get('winrate', 0):.1f}% побед
+• Ночь (22-6): {time_performance.get('night', {}).get('matches', 0)} матчей → {time_performance.get('night', {}).get('winrate', 0):.1f}% побед
+⚠️ АНОМАЛИЯ: Резкие провалы в конкретное время могут указывать на договоренности!
+
+🏓 ТЕХНИЧЕСКАЯ ЭФФЕКТИВНОСТЬ (подача/приём):
+• Средняя подача: {serve_receive.get('serve', {}).get('avg', 0):.1f}% | приём: {serve_receive.get('receive', {}).get('avg', 0):.1f}%
+• В ВЫИГРАННЫХ: подача {serve_receive.get('serve', {}).get('in_wins', 0):.1f}% | приём {serve_receive.get('receive', {}).get('in_wins', 0):.1f}%
+• В ПРОИГРАННЫХ: подача {serve_receive.get('serve', {}).get('in_losses', 0):.1f}% | приём {serve_receive.get('receive', {}).get('in_losses', 0):.1f}%
+⚠️ АНОМАЛИЯ: Разница >20% между победами и поражениями может означать намеренное снижение!
+
+🧠 ПСИХОЛОГИЧЕСКИЙ ПРОФИЛЬ:
+• Как ФАВОРИТ: {role_performance.get('favorite', {}).get('matches', 0)} матчей → {role_performance.get('favorite', {}).get('winrate', 0):.1f}% побед
+• Как АУТСАЙДЕР: {role_performance.get('underdog', {}).get('matches', 0)} матчей → {role_performance.get('underdog', {}).get('winrate', 0):.1f}% побед
+⚠️ АНОМАЛИЯ: Если фаворит проигрывает чаще чем аутсайдер - КРАСНЫЙ ФЛАГ!
+
+📈 ДИНАМИКА ФОРМЫ:
+• Последние 10 матчей: {last10_winrate:.1f}%
+• Последние 20 матчей: {last20_winrate:.1f}%
+• Тренд: {trend} {trend_icon}
+⚠️ АНОМАЛИЯ: Резкие провалы без объективных причин!
+
+💡 ПОСЛЕДНИЕ 5 МАТЧЕЙ (детально):
+{recent_matches_text}
+
+🔥 ОБНАРУЖЕННЫЙ ТРИГГЕР/ПАТТЕРН:
 {trigger_value}
 
 {rag_section}
 
-Сделай профессиональный анализ игрока в 2-3 предложениях: объясни возможные причины проблем и дай рекомендации.
+═══════════════════════════════════════
+ЗАДАЧА:
+═══════════════════════════════════════
+
+Проанализируй игрока на ВЕРОЯТНОСТЬ ДОГОВОРНЫХ МАТЧЕЙ или НАМЕРЕННЫХ ПРОИГРЫШЕЙ.
+
+УЧИТЫВАЙ автоматический скоринг подозрительности: {suspicion_score:.0%} ({risk_level})
+
+СТРОГО 3-4 ПРЕДЛОЖЕНИЯ в формате:
+
+🚨 УРОВЕНЬ РИСКА: [НИЗКИЙ/СРЕДНИЙ/ВЫСОКИЙ/КРИТИЧЕСКИЙ]
+📊 КЛЮЧЕВЫЕ АНОМАЛИИ: [перечисли конкретные цифры и отклонения]
+🎯 ВЕРОЯТНАЯ СХЕМА: [какой тип подставы, если обнаружен]
+✅ РЕКОМЕНДАЦИИ: [что проверить дополнительно]
+
+Будь объективным. Только факты. Без эмоций.
 """
-        print("🚀 Промпт для AI-анализа:")
-        print("=" * 60)
+        print("🚀 Промпт для детектора мошенничества:")
+        print("=" * 80)
         print(prompt)
-        print("=" * 60)
+        print("=" * 80)
         
         return prompt
 

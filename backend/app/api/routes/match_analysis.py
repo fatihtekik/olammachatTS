@@ -2,6 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_
 from sympy import re
 from app.database.db import get_db
 from app.services.match_analysis_service import MatchAnalysisService
@@ -47,9 +48,26 @@ async def upload_excel_file(
         try:
             df = pd.read_excel(io.BytesIO(contents))
             # Нормализуем заголовки сразу и один раз
-            df.rename(columns=lambda x: str(x).strip(), inplace=True)
+            df.rename(columns=lambda x: str(x).strip().replace('Счет', 'Счёт').replace('счет', 'счёт'), inplace=True)
             print(f"📊 Excel файл прочитан. Строк: {len(df)}, Столбцов: {len(df.columns)}")
-            print(f"🏷️  Столбцы: {list(df.columns)}")
+            print(f"🏷️  Столбцы: {list(df.columns)[:20]}...")
+            
+            # Проверяем наличие колонок с сетами после нормализации
+            set_cols = [c for c in df.columns if 'сет' in c.lower() and 'счёт' in c.lower()]
+            print(f"🎾 Колонки с СЧЕТАМИ сетов ({len(set_cols)}):")
+            for sc in set_cols:
+                print(f"   - {sc}")
+            
+            # DEBUG: Проверим первую строку данных для сетов 4-5
+            if len(df) > 0:
+                first_row = df.iloc[0]
+                print(f"\n🔍 DEBUG: Первая строка (сеты 4-5):")
+                for i in [4, 5]:
+                    col1 = f'Счёт {i} сета Игрок 1'
+                    col2 = f'Счёт {i} сета Игрок 2'
+                    val1 = first_row.get(col1, 'НЕТ КОЛОНКИ')
+                    val2 = first_row.get(col2, 'НЕТ КОЛОНКИ')
+                    print(f"   Сет {i}: '{val1}' : '{val2}' (тип: {type(val1).__name__})")
         except Exception as e:
             print(f"❌ Ошибка чтения Excel: {str(e)}")
             raise HTTPException(status_code=400, detail=f"Не удалось прочитать Excel файл: {str(e)}")
@@ -65,13 +83,15 @@ async def upload_excel_file(
             raise HTTPException(status_code=400, detail=f"В Excel отсутствуют колонки: {missing_cols}")
 
         # Проверяем наличие счета - новый формат (приоритет) или старый
-        has_new_score_format = all(c in df.columns for c in ["Счет матча игрока 1", "Счет матча игрока 2"])
-        has_old_score_format = any(c in df.columns for c in ["Счёт", "Счет", "СЧЁТ", "СЧЕТ"])
+        # ВАЖНО: проверяем ПОСЛЕ нормализации, поэтому ищем с буквой Ё
+        has_new_score_format = all(c in df.columns for c in ["Счёт матча игрока 1", "Счёт матча игрока 2"])
+        has_old_score_format = "Счёт" in df.columns
         
         if not has_new_score_format and not has_old_score_format:
-            raise HTTPException(status_code=400, detail="В Excel нет колонок 'Счет матча игрока 1/2' или 'Счёт'")
+            print(f"❌ Доступные колонки: {list(df.columns)}")
+            raise HTTPException(status_code=400, detail="В Excel нет колонок 'Счёт матча игрока 1/2' или 'Счёт'")
         
-        print(f"📊 Формат счета: {'НОВЫЙ (Счет матча игрока 1/2)' if has_new_score_format else 'СТАРЫЙ (Счёт)'}")
+        print(f"📊 Формат счета: {'НОВЫЙ (Счёт матча игрока 1/2)' if has_new_score_format else 'СТАРЫЙ (Счёт)'}")
 
         # Вспомогательные парсеры
         import re
@@ -89,11 +109,12 @@ async def upload_excel_file(
 
         def get_match_score(row):
             """Получить счет матча по СЕТАМ из нового или старого формата"""
-            # НОВЫЙ формат: отдельные колонки "Счет матча игрока 1" и "Счет матча игрока 2"
+            # НОВЫЙ формат: отдельные колонки "Счёт матча игрока 1" и "Счёт матча игрока 2"
             # Это счет по СЕТАМ (например 3:1 означает 3 сета к 1)
+            # ВАЖНО: после нормализации все 'Счет' стали 'Счёт'
             if has_new_score_format:
-                score1 = row.get('Счет матча игрока 1')
-                score2 = row.get('Счет матча игрока 2')
+                score1 = row.get('Счёт матча игрока 1')
+                score2 = row.get('Счёт матча игрока 2')
                 if pd.notna(score1) and pd.notna(score2):
                     try:
                         s1 = int(float(score1))
@@ -105,16 +126,14 @@ async def upload_excel_file(
             # СТАРЫЙ формат: единая колонка "Счёт" 
             # Может содержать счет типа "3:1" или детальный счет
             if has_old_score_format:
-                score_col = next((c for c in ["Счёт", "Счет", "СЧЁТ", "СЧЕТ"] if c in df.columns), None)
-                if score_col:
-                    val = row.get(score_col)
-                    if pd.notna(val):
-                        s = str(val).strip()
-                        # Извлекаем счёт формата X:Y или X-Y
-                        m = re.match(r"\s*([0-9]+)[\:\-]([0-9]+)", s)
-                        if m:
-                            return f"{m.group(1)}:{m.group(2)}"
-                        return s
+                val = row.get('Счёт')  # После нормализации всегда 'Счёт'
+                if pd.notna(val):
+                    s = str(val).strip()
+                    # Извлекаем счёт формата X:Y или X-Y
+                    m = re.match(r"\s*([0-9]+)[\:\-]([0-9]+)", s)
+                    if m:
+                        return f"{m.group(1)}:{m.group(2)}"
+                    return s
             
             return "0:0"
 
@@ -143,10 +162,15 @@ async def upload_excel_file(
                     print(f"🔍 Матч {idx+1}: {p1} vs {p2}")
                     print(f"   Счет по сетам: {main_score}")
                     if has_new_score_format:
-                        print(f"   Из колонок: [{row.get('Счет матча игрока 1')}:{row.get('Счет матча игрока 2')}]")
-                    print(f"   Сет 1: {row.get('Счет 1 сета Игрок 1')}:{row.get('Счет 1 сета Игрок 2')}")
-                    print(f"   Сет 2: {row.get('Счет 2 сета Игрок 1')}:{row.get('Счет 2 сета Игрок 2')}")
-                    print(f"   Сет 3: {row.get('Счет 3 сета Игрок 1')}:{row.get('Счет 3 сета Игрок 2')}")
+                        print(f"   Из колонок: [{row.get('Счёт матча игрока 1')}:{row.get('Счёт матча игрока 2')}]")
+                    print(f"   Сет 1: {row.get('Счёт 1 сета Игрок 1')}:{row.get('Счёт 1 сета Игрок 2')}")
+                    print(f"   Сет 2: {row.get('Счёт 2 сета Игрок 1')}:{row.get('Счёт 2 сета Игрок 2')}")
+                    print(f"   Сет 3: {row.get('Счёт 3 сета Игрок 1')}:{row.get('Счёт 3 сета Игрок 2')}")
+                    print(f"   Сет 4: {row.get('Счёт 4 сета Игрок 1')}:{row.get('Счёт 4 сета Игрок 2')}")
+                    print(f"   Сет 5: {row.get('Счёт 5 сета Игрок 1')}:{row.get('Счёт 5 сета Игрок 2')}")
+                    print(f"   🔍 safe_get результаты:")
+                    print(f"      Сет 4 после safe_get: {safe_get(row, 'Счёт 4 сета Игрок 1')} : {safe_get(row, 'Счёт 4 сета Игрок 2')}")
+                    print(f"      Сет 5 после safe_get: {safe_get(row, 'Счёт 5 сета Игрок 1')} : {safe_get(row, 'Счёт 5 сета Игрок 2')}")
                 
                 # Если рейтинги не в именах, берем из отдельных колонок
                 if not r1 and 'Рейтинг игрока 1' in df.columns:
@@ -168,9 +192,9 @@ async def upload_excel_file(
                     рейтинг_игрок_2=r2,
                     счёт=main_score,  # Общий счет (для совместимости)
                     
-                    # НОВЫЕ ПОЛЯ: Счет матча по сетам
-                    счет_матча_игрока_1=safe_get(row, 'Счет матча игрока 1'),
-                    счет_матча_игрока_2=safe_get(row, 'Счет матча игрока 2'),
+                    # НОВЫЕ ПОЛЯ: Счет матча по сетам (ПОСЛЕ нормализации используем 'Счёт')
+                    счет_матча_игрока_1=safe_get(row, 'Счёт матча игрока 1'),
+                    счет_матча_игрока_2=safe_get(row, 'Счёт матча игрока 2'),
                     
                     стадия=safe_get(row, 'Стадия'),
                     турнир=safe_get(row, 'Турнир'),
@@ -178,17 +202,17 @@ async def upload_excel_file(
                     sl_id=safe_get(row, 'SL-ID'),
                     fon_id=safe_get(row, 'FON-ID'),
                     
-                    # Счета по сетам
-                    счёт_1_сета_игрок_1=safe_get(row, 'Счет 1 сета Игрок 1'),
-                    счёт_1_сета_игрок_2=safe_get(row, 'Счет 1 сета Игрок 2'),
-                    счёт_2_сета_игрок_1=safe_get(row, 'Счет 2 сета Игрок 1'),
-                    счёт_2_сета_игрок_2=safe_get(row, 'Счет 2 сета Игрок 2'),
-                    счёт_3_сета_игрок_1=safe_get(row, 'Счет 3 сета Игрок 1'),
-                    счёт_3_сета_игрок_2=safe_get(row, 'Счет 3 сета Игрок 2'),
-                    счёт_4_сета_игрок_1=safe_get(row, 'Счет 4 сета Игрок 1'),
-                    счёт_4_сета_игрок_2=safe_get(row, 'Счет 4 сета Игрок 2'),
-                    счёт_5_сета_игрок_1=safe_get(row, 'Счет 5 сета Игрок 1'),
-                    счёт_5_сета_игрок_2=safe_get(row, 'Счет 5 сета Игрок 2'),
+                    # Счета по сетам (ПОСЛЕ нормализации все "Счет" → "Счёт")
+                    счёт_1_сета_игрок_1=safe_get(row, 'Счёт 1 сета Игрок 1'),
+                    счёт_1_сета_игрок_2=safe_get(row, 'Счёт 1 сета Игрок 2'),
+                    счёт_2_сета_игрок_1=safe_get(row, 'Счёт 2 сета Игрок 1'),
+                    счёт_2_сета_игрок_2=safe_get(row, 'Счёт 2 сета Игрок 2'),
+                    счёт_3_сета_игрок_1=safe_get(row, 'Счёт 3 сета Игрок 1'),
+                    счёт_3_сета_игрок_2=safe_get(row, 'Счёт 3 сета Игрок 2'),
+                    счёт_4_сета_игрок_1=safe_get(row, 'Счёт 4 сета Игрок 1'),
+                    счёт_4_сета_игрок_2=safe_get(row, 'Счёт 4 сета Игрок 2'),
+                    счёт_5_сета_игрок_1=safe_get(row, 'Счёт 5 сета Игрок 1'),
+                    счёт_5_сета_игрок_2=safe_get(row, 'Счёт 5 сета Игрок 2'),
                     
                     # Эффективность в матче
                     эффективность_подачи_игрока_1_в_матче=safe_get(row, 'Эффективность подачи игрока 1 в матче'),
@@ -248,6 +272,17 @@ async def upload_excel_file(
                     баланс_в_4_сете=safe_get(row, 'Баланс в 4 сете'),
                     баланс_в_5_сете=safe_get(row, 'Баланс в 5 сете')
                 )
+                
+                # DEBUG: Логируем первые 2 матча для проверки сетов
+                if idx < 2:
+                    print(f"\n🔍 DEBUG Матч {idx+1}:")
+                    print(f"   Счет: {safe_get(row, 'Счёт')}")
+                    print(f"   Сет 1: {match_data.счёт_1_сета_игрок_1} : {match_data.счёт_1_сета_игрок_2}")
+                    print(f"   Сет 2: {match_data.счёт_2_сета_игрок_1} : {match_data.счёт_2_сета_игрок_2}")
+                    print(f"   Сет 3: {match_data.счёт_3_сета_игрок_1} : {match_data.счёт_3_сета_игрок_2}")
+                    print(f"   Сет 4: {match_data.счёт_4_сета_игрок_1} : {match_data.счёт_4_сета_игрок_2}")
+                    print(f"   Сет 5: {match_data.счёт_5_сета_игрок_1} : {match_data.счёт_5_сета_игрок_2}")
+                
                 excel_data.append(match_data)
             except Exception as e:
                 err = f"Строка {idx+1}: {e.__class__.__name__}: {e}"
@@ -591,12 +626,12 @@ async def generate_single_trigger_ai_analysis(
                 'wins': 0, 'losses': 0, 'win_rate': 0.0, 'matches_played': 0, 'recent_form': ''
             }
 
-        # Используем внутренний метод генерации анализа (без комплексного)
+        # Используем внутренний метод генерации анализа (правильный порядок параметров)
         full_text = await service._generate_ai_analysis(
-            trigger.trigger_type,
             player.full_name if player else 'Неизвестный игрок',
             trigger.trigger_value,
-            player_stats or {}
+            player_stats,
+            provider=request.provider or "lmstudio"
         )
 
         # Ограничиваем по количеству слов
@@ -618,6 +653,113 @@ async def generate_single_trigger_ai_analysis(
         logger.error(f"Ошибка при генерации ИИ-анализа триггера {trigger_id}: {e}")
         raise HTTPException(status_code=500, detail="Ошибка генерации анализа")
 
+@router.get("/triggers-enhanced")
+async def get_triggers_enhanced(
+    player_id: Optional[str] = None,
+    trigger_type: Optional[str] = None,
+    severity_level: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    enable_ai_analysis: bool = False,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Получение триггеров с evidence (детали матчей) и опциональным AI-анализом
+    
+    Расширенный эндпоинт который возвращает триггеры вместе с доказательствами
+    из матчей (evidence) включая детали по сетам.
+    """
+    logger.info(f"📊 Получение расширенных триггеров: player_id={player_id}, type={trigger_type}, AI={enable_ai_analysis}")
+    
+    try:
+        query = db.query(PlayerTrigger).join(Player)
+        
+        if player_id:
+            query = query.filter(PlayerTrigger.player_id == player_id)
+        
+        if trigger_type:
+            query = query.filter(PlayerTrigger.trigger_type == trigger_type)
+            
+        if severity_level:
+            query = query.filter(PlayerTrigger.severity_level == severity_level)
+        
+        # Фильтр по датам если указаны
+        if start_date:
+            query = query.filter(PlayerTrigger.period_start >= start_date)
+        if end_date:
+            query = query.filter(PlayerTrigger.period_end <= end_date)
+        
+        triggers = query.order_by(PlayerTrigger.created_at.desc()).limit(limit).all()
+        
+        service = MatchAnalysisService(db)
+        result = []
+        
+        for trigger in triggers:
+            player = db.query(Player).filter(Player.id == trigger.player_id).first()
+            if not player:
+                continue
+            
+            # Получаем матчи игрока за период триггера
+            matches = db.query(Match).filter(
+                and_(
+                    Match.date >= trigger.period_start,
+                    Match.date <= trigger.period_end,
+                    or_(Match.player1_id == player.id, Match.player2_id == player.id)
+                )
+            ).order_by(Match.date.desc()).all()
+            
+            # Извлекаем evidence для триггера
+            trigger_evidence = service._extract_trigger_evidence(
+                player,
+                trigger.trigger_type,
+                matches
+            )
+            
+            # Получаем статистику игрока
+            player_stats = service._get_player_stats_for_trigger(
+                trigger.player_id,
+                trigger.period_start,
+                trigger.period_end
+            )
+            
+            # Опционально генерируем AI-анализ
+            ai_analysis = None
+            if enable_ai_analysis:
+                ai_analysis = await service._generate_ai_analysis(
+                    player.full_name,
+                    trigger.trigger_value,
+                    player_stats or {},
+                    provider="lmstudio"
+                )
+            
+            trigger_dict = {
+                'id': trigger.id,
+                'player_id': trigger.player_id,
+                'player_name': player.full_name,
+                'player_rating': player.current_rating,
+                'trigger_type': trigger.trigger_type,
+                'trigger_subtype': trigger.trigger_subtype,
+                'trigger_value': trigger.trigger_value,
+                'severity_level': trigger.severity_level,
+                'period_start': trigger.period_start,
+                'period_end': trigger.period_end,
+                'is_active': trigger.is_active,
+                'trigger_metadata': trigger.trigger_metadata,
+                'created_at': trigger.created_at,
+                'player_stats': player_stats,
+                'evidence': trigger_evidence,  # Доказательства с сетами
+                'ai_analysis': ai_analysis
+            }
+            result.append(trigger_dict)
+        
+        logger.info(f"✅ Найдено триггеров с evidence: {len(result)}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении расширенных триггеров: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
+
 @router.get("/triggers")
 async def get_all_triggers(
     player_id: Optional[str] = None,
@@ -627,7 +769,7 @@ async def get_all_triggers(
     db: Session = Depends(get_db)
 ):
     """
-    Получение списка всех триггеров с фильтрацией
+    Получение списка всех триггеров с фильтрацией (базовая версия без evidence)
     
     Публичный эндпоинт для получения триггеров с возможностью фильтрации
     по игроку, типу триггера и уровню серьезности.

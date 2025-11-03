@@ -22,7 +22,29 @@ interface Trigger {
     losses: number;
     win_rate: number;
     recent_form: string;
+    suspicion_score?: number;
+    collapse_rate?: number;
+    serve_efficiency_variance?: number;
   };
+  evidence?: Array<{
+    date: string;
+    time?: string;
+    opponent: string;
+    opponent_rating?: number;
+    score: string;
+    sets?: Array<{
+      set_number: number;
+      player_points: number;
+      opponent_points: number;
+      won: boolean;
+    }>;
+    highlight: string;
+    serve_efficiency?: number;
+    receive_efficiency?: number;
+    was_favorite: boolean;
+    rating_diff: number;
+    red_flags: string[];
+  }>;
 }
 
 interface Player {
@@ -35,7 +57,9 @@ const TriggersListPage: React.FC = () => {
   const [triggers, setTriggers] = useState<Trigger[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
+  const [aiLoading, setAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expandedEvidence, setExpandedEvidence] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState({
     player_id: '',
     trigger_type: '',
@@ -162,6 +186,7 @@ const TriggersListPage: React.FC = () => {
   const fetchTriggersWithAI = async () => {
     try {
       setLoading(true);
+      setAiLoading(true);
       const params = new URLSearchParams();
       
       if (filters.player_id) params.append('player_id', filters.player_id);
@@ -186,6 +211,7 @@ const TriggersListPage: React.FC = () => {
       console.error('Error fetching triggers with AI:', err);
     } finally {
       setLoading(false);
+      setAiLoading(false);
     }
   };
 
@@ -214,6 +240,223 @@ const TriggersListPage: React.FC = () => {
   const getPlayerNameById = (playerId: string): string => {
     const player = players.find(p => p.id === playerId);
     return player?.full_name || 'Неизвестный игрок';
+  };
+
+  const getSuspicionLevel = (score: number): string => {
+    if (score >= 0.7) return 'КРИТИЧЕСКИЙ';
+    if (score >= 0.5) return 'ВЫСОКИЙ';
+    if (score >= 0.3) return 'СРЕДНИЙ';
+    return 'НИЗКИЙ';
+  };
+
+  const getSuspicionClass = (score: number): string => {
+    if (score >= 0.7) return 'critical';
+    if (score >= 0.5) return 'high';
+    if (score >= 0.3) return 'medium';
+    return 'low';
+  };
+
+  const getSuspicionIcon = (score: number): string => {
+    if (score >= 0.7) return '🔴';
+    if (score >= 0.5) return '🟠';
+    if (score >= 0.3) return '🟡';
+    return '🟢';
+  };
+
+  const renderAIAnalysis = (analysisText: string) => {
+    // Парсим анализ и извлекаем структуру
+    const riskMatch = analysisText.match(/🚨\s*УРОВЕНЬ РИСКА:\s*\[?([А-ЯЁ]+)\]?/i);
+    const anomaliesMatch = analysisText.match(/📊\s*КЛЮЧЕВЫЕ АНОМАЛИИ:\s*([\s\S]+?)(?=🎯|✅|$)/);
+    const schemeMatch = analysisText.match(/🎯\s*ВЕРОЯТНАЯ СХЕМА:\s*([\s\S]+?)(?=✅|$)/);
+    const recommendationsMatch = analysisText.match(/✅\s*РЕКОМЕНДАЦИИ:\s*([\s\S]+?)$/);
+
+    const riskLevel = riskMatch ? riskMatch[1].trim() : 'НЕИЗВЕСТНО';
+    const anomalies = anomaliesMatch ? anomaliesMatch[1].trim() : '';
+    const scheme = schemeMatch ? schemeMatch[1].trim() : '';
+    const recommendations = recommendationsMatch ? recommendationsMatch[1].trim() : '';
+
+    // Определяем цвет по уровню риска
+    const getRiskColor = (level: string) => {
+      switch(level.toUpperCase()) {
+        case 'КРИТИЧЕСКИЙ': return '#dc3545';
+        case 'ВЫСОКИЙ': return '#fd7e14';
+        case 'СРЕДНИЙ': return '#ffc107';
+        case 'НИЗКИЙ': return '#28a745';
+        default: return '#6c757d';
+      }
+    };
+
+    const getRiskIcon = (level: string) => {
+      switch(level.toUpperCase()) {
+        case 'КРИТИЧЕСКИЙ': return '🚨';
+        case 'ВЫСОКИЙ': return '⚠️';
+        case 'СРЕДНИЙ': return '⚡';
+        case 'НИЗКИЙ': return '✅';
+        default: return '❓';
+      }
+    };
+
+    return (
+      <div className="ai-analysis-parsed">
+        <div className="risk-level-badge" style={{ backgroundColor: getRiskColor(riskLevel) }}>
+          <span className="risk-icon">{getRiskIcon(riskLevel)}</span>
+          <span className="risk-text">УРОВЕНЬ РИСКА: {riskLevel}</span>
+        </div>
+
+        {anomalies && (
+          <div className="analysis-section">
+            <div className="section-header">📊 Ключевые аномалии</div>
+            <div className="section-content">{anomalies}</div>
+          </div>
+        )}
+
+        {scheme && (
+          <div className="analysis-section">
+            <div className="section-header">🎯 Вероятная схема</div>
+            <div className="section-content">{scheme}</div>
+          </div>
+        )}
+
+        {recommendations && (
+          <div className="analysis-section">
+            <div className="section-header">✅ Рекомендации</div>
+            <div className="section-content">{recommendations}</div>
+          </div>
+        )}
+
+        {!riskMatch && (
+          <div className="analysis-fallback">
+            <p>{analysisText}</p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const toggleEvidence = (triggerId: string) => {
+    setExpandedEvidence(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(triggerId)) {
+        newSet.delete(triggerId);
+      } else {
+        newSet.add(triggerId);
+      }
+      return newSet;
+    });
+  };
+
+  const getEfficiencyClass = (value?: number): string => {
+    if (!value) return 'medium';
+    if (value < 40) return 'low';
+    if (value < 60) return 'medium';
+    return 'high';
+  };
+
+  // Краткая строка со счётом всех сетов: "5:11 · 7:11 · 9:11"
+  const formatSetsSummary = (sets?: Array<{ set_number: number; player_points: number; opponent_points: number; won: boolean; }>): string => {
+    if (!sets || sets.length === 0) return '';
+    return sets
+      .sort((a, b) => a.set_number - b.set_number)
+      .map(s => `${s.player_points}:${s.opponent_points}`)
+      .join(' · ');
+  };
+
+  const renderEvidence = (trigger: Trigger) => {
+    if (!trigger.evidence || trigger.evidence.length === 0) {
+      return null;
+    }
+
+    const isExpanded = expandedEvidence.has(trigger.id);
+
+    return (
+      <div className="evidence-section">
+        <div className="evidence-header" onClick={() => toggleEvidence(trigger.id)}>
+          <div className="evidence-title">
+            Доказательства из матчей
+            <span className="evidence-count">{trigger.evidence.length} матчей</span>
+          </div>
+          <span className={`evidence-toggle ${isExpanded ? 'expanded' : ''}`}>▼</span>
+        </div>
+
+        {isExpanded && (
+          <div className="evidence-list">
+            {trigger.evidence.map((evidence, index) => (
+              <div key={index} className="evidence-item">
+                <div className="evidence-item-header">
+                  <div className="evidence-match-info">
+                    <div className="evidence-date-time">
+                      {new Date(evidence.date).toLocaleDateString('ru-RU')}
+                      {evidence.time && ` | ${evidence.time}`}
+                    </div>
+                    <div className="evidence-opponent">
+                      {evidence.opponent}
+                      {evidence.opponent_rating && (
+                        <span className={`evidence-rating-diff ${evidence.was_favorite ? 'favorite' : 'underdog'}`}>
+                          {evidence.was_favorite ? 'Фаворит' : 'Аутсайдер'} (±{Math.abs(evidence.rating_diff)})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="evidence-score">{evidence.score}</div>
+                </div>
+
+                {/* Всегда показываем компактную строку сетов вместо текста названия триггера */}
+                {/* ТОЛЬКО если нет детальных сетов - показываем highlight */}
+                {!(evidence.sets && evidence.sets.length > 0) && (
+                  <div className="evidence-highlight">
+                    {evidence.highlight}
+                  </div>
+                )}
+
+                {/* Детализированные сеты (горизонтально) */}
+                {evidence.sets && evidence.sets.length > 0 && (
+                  <div className="evidence-sets">
+                    {evidence.sets.map((set, setIdx) => (
+                      <div
+                        key={setIdx}
+                        className={`set-score ${set.won ? 'set-won' : 'set-lost'}`}
+                      >
+                        <span className="set-number">Сет {set.set_number}</span>
+                        <span className="set-points">{set.player_points}:{set.opponent_points}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {(evidence.serve_efficiency !== undefined || evidence.receive_efficiency !== undefined) && (
+                  <div className="evidence-stats">
+                    {evidence.serve_efficiency !== undefined && (
+                      <div className="evidence-stat">
+                        <div className="evidence-stat-label">Подача</div>
+                        <div className={`evidence-stat-value ${getEfficiencyClass(evidence.serve_efficiency)}`}>
+                          {evidence.serve_efficiency.toFixed(1)}%
+                        </div>
+                      </div>
+                    )}
+                    {evidence.receive_efficiency !== undefined && (
+                      <div className="evidence-stat">
+                        <div className="evidence-stat-label">Прием</div>
+                        <div className={`evidence-stat-value ${getEfficiencyClass(evidence.receive_efficiency)}`}>
+                          {evidence.receive_efficiency.toFixed(1)}%
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {evidence.red_flags && evidence.red_flags.length > 0 && (
+                  <div className="evidence-red-flags">
+                    {evidence.red_flags.map((flag, idx) => (
+                      <span key={idx} className="red-flag-badge">{flag}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   if (loading) {
@@ -396,15 +639,51 @@ const TriggersListPage: React.FC = () => {
                           <span>Последние матчи: {trigger.player_stats.recent_form}</span>
                         </div>
                       )}
+                      
+                      {trigger.player_stats.suspicion_score !== undefined && (
+                        <div className="suspicion-score-block">
+                          <h5>📊 Автоматический скоринг подозрительности:</h5>
+                          <div className={`suspicion-badge ${getSuspicionClass(trigger.player_stats.suspicion_score)}`}>
+                            {getSuspicionIcon(trigger.player_stats.suspicion_score)} {(trigger.player_stats.suspicion_score * 100).toFixed(0)}% ({getSuspicionLevel(trigger.player_stats.suspicion_score)})
+                          </div>
+                          <div className="suspicion-details">
+                            {trigger.player_stats.collapse_rate !== undefined && (
+                              <span>• Коллапсы после 2:0: {trigger.player_stats.collapse_rate.toFixed(0)}%</span>
+                            )}
+                            {trigger.player_stats.serve_efficiency_variance !== undefined && (
+                              <span>• Волатильность подачи: ±{(trigger.player_stats.serve_efficiency_variance * 100).toFixed(0)}%</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {trigger.ai_analysis && (
-                    <div className="ai-analysis">
-                      <h5>ИИ-анализ:</h5>
-                      <p>{trigger.ai_analysis}</p>
+                  {aiLoading && (
+                    <div className="ai-thinking">
+                      🤖 ИИ анализирует данные
+                      <div className="thinking-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </div>
                     </div>
                   )}
+
+                  {!aiLoading && trigger.ai_analysis && (
+                    <div className="ai-analysis-block">
+                      <div className="ai-analysis-header">
+                        <div className="ai-icon">🤖</div>
+                        <h5>Анализ детектора мошенничества</h5>
+                      </div>
+                      <div className="ai-analysis-content">
+                        {renderAIAnalysis(trigger.ai_analysis)}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Доказательства показываем всегда, когда они есть */}
+                  {renderEvidence(trigger)}
                 </div>
 
                 <div className="trigger-footer">

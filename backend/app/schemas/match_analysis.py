@@ -207,6 +207,7 @@ class UpdateStatsRequest(BaseModel):
 class TriggerAIAnalysisRequest(BaseModel):
     """Запрос на генерацию ИИ-анализа для одного триггера"""
     word_limit: int = 60  # Ограничение по количеству слов (сжатый, но информативный текст)
+    provider: Optional[str] = "lmstudio"  # Провайдер AI (lmstudio или ollama)
 
 class TriggerAIAnalysisResponse(BaseModel):
     """Ответ с ИИ-анализом конкретного триггера"""

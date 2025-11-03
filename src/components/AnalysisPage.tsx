@@ -43,6 +43,25 @@ interface Trigger {
       time?: string;
     }>;
   };
+  evidence?: Array<{
+    date: string;
+    time?: string;
+    opponent: string;
+    opponent_rating?: number;
+    score: string;
+    sets?: Array<{
+      set_number: number;
+      player_points: number;
+      opponent_points: number;
+      won: boolean;
+    }>;
+    highlight: string;
+    serve_efficiency?: number;
+    receive_efficiency?: number;
+    was_favorite: boolean;
+    rating_diff: number;
+    red_flags: string[];
+  }>;
 }
 
 interface Player {
@@ -476,14 +495,114 @@ const AnalysisPage: React.FC = () => {
   const openTriggerModal = (trigger: Trigger) => {
     setSelectedTrigger(trigger);
     setModalOpen(true);
-  // Инициируем загрузку ИИ-анализа только для этого триггера (сжатый)
-  fetchSingleTriggerAnalysis(trigger.id);
   };
 
   const closeModal = () => {
     setModalOpen(false);
     setSelectedTrigger(null);
-    setSingleTriggerAnalysis('');
+  };
+
+  const getEfficiencyClass = (value?: number): string => {
+    if (!value) return 'medium';
+    if (value < 40) return 'low';
+    if (value < 60) return 'medium';
+    return 'high';
+  };
+
+  // Краткая строка со счетом всех сетов, например: "5:11 · 7:11 · 9:11"
+  const formatSetsSummary = (sets?: Array<{ set_number: number; player_points: number; opponent_points: number; won: boolean; }>): string => {
+    if (!sets || sets.length === 0) return '';
+    return sets
+      .sort((a, b) => a.set_number - b.set_number)
+      .map(s => `${s.player_points}:${s.opponent_points}`)
+      .join(' · ');
+  };
+
+  const renderEvidence = (trigger: Trigger) => {
+    if (!trigger.evidence || trigger.evidence.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="modal-evidence-section">
+        <h5>Доказательства из матчей ({trigger.evidence.length})</h5>
+        <div className="evidence-list">
+          {trigger.evidence.map((evidence, index) => (
+            <div key={index} className="evidence-item">
+              <div className="evidence-item-header">
+                <div className="evidence-match-info">
+                  <div className="evidence-date-time">
+                    {new Date(evidence.date).toLocaleDateString('ru-RU')}
+                    {evidence.time && ` | ${evidence.time}`}
+                  </div>
+                  <div className="evidence-opponent">
+                    {evidence.opponent}
+                    {evidence.opponent_rating && (
+                      <span className={`evidence-rating-diff ${evidence.was_favorite ? 'favorite' : 'underdog'}`}>
+                        {evidence.was_favorite ? 'Фаворит' : 'Аутсайдер'} (±{Math.abs(evidence.rating_diff)})
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="evidence-score">{evidence.score}</div>
+              </div>
+
+              {/* Под шапкой всегда показываем компактную строку сетов в стилизованном блоке */}
+              {/* ТОЛЬКО если нет детальных сетов - показываем highlight */}
+              {!(evidence.sets && evidence.sets.length > 0) && (
+                <div className="evidence-highlight">
+                  {evidence.highlight}
+                </div>
+              )}
+
+              {/* Детализированные сеты (горизонтально), если нужны визуально */}
+              {evidence.sets && evidence.sets.length > 0 && (
+                <div className="evidence-sets">
+                  {evidence.sets.map((set, setIdx) => (
+                    <div
+                      key={setIdx}
+                      className={`set-score ${set.won ? 'set-won' : 'set-lost'}`}
+                    >
+                      <span className="set-number">Сет {set.set_number}</span>
+                      <span className="set-points">{set.player_points}:{set.opponent_points}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {(evidence.serve_efficiency !== undefined || evidence.receive_efficiency !== undefined) && (
+                <div className="evidence-stats">
+                  {evidence.serve_efficiency !== undefined && (
+                    <div className="evidence-stat">
+                      <div className="evidence-stat-label">Подача</div>
+                      <div className={`evidence-stat-value ${getEfficiencyClass(evidence.serve_efficiency)}`}>
+                        {evidence.serve_efficiency.toFixed(1)}%
+                      </div>
+                    </div>
+                  )}
+                  {evidence.receive_efficiency !== undefined && (
+                    <div className="evidence-stat">
+                      <div className="evidence-stat-label">Прием</div>
+                      <div className={`evidence-stat-value ${getEfficiencyClass(evidence.receive_efficiency)}`}>
+                        {evidence.receive_efficiency.toFixed(1)}%
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {evidence.red_flags && evidence.red_flags.length > 0 && (
+                <div className="evidence-red-flags">
+                  {evidence.red_flags.map((flag, idx) => (
+                    <span key={idx} className="red-flag-badge">{flag}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   const fetchSingleTriggerAnalysis = async (triggerId: string) => {
@@ -493,7 +612,10 @@ const AnalysisPage: React.FC = () => {
       const response = await fetch(`http://localhost:8000/api/v1/match-analysis/triggers/${triggerId}/ai-analysis`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ word_limit: SINGLE_TRIGGER_WORD_LIMIT })
+        body: JSON.stringify({ 
+          word_limit: SINGLE_TRIGGER_WORD_LIMIT,
+          provider: aiProvider || 'lmstudio'
+        })
       });
       if (response.ok) {
         const data = await response.json();
@@ -804,25 +926,8 @@ const AnalysisPage: React.FC = () => {
                   <p>{selectedTrigger.trigger_value}</p>
                 </div>
 
-                <div className="modal-ai-analysis">
-                  <h5>Анализ ИИ:</h5>
-                  {!aiAnalysisEnabled ? (
-                    <p style={{ color: '#6b7280', fontStyle: 'italic' }}>Был отключен</p>
-                  ) : selectedTrigger.ai_analysis ? (
-                    <p>{selectedTrigger.ai_analysis}</p>
-                  ) : (
-                    <p style={{ color: '#6b7280', fontStyle: 'italic' }}>Нет данных</p>
-                  )}
-                </div>
-                <div className="modal-ai-analysis">
-                  <h5>Краткий анализ этого триггера:</h5>
-                  {singleTriggerLoading ? (
-                    <p>Генерируем краткий анализ...</p>
-                  ) : (
-                    <p>{singleTriggerAnalysis || 'Нет данных'}</p>
-                  )}
-                  <small>Лимит слов: {SINGLE_TRIGGER_WORD_LIMIT}</small>
-                </div>
+                {/* Доказательства из матчей */}
+                {renderEvidence(selectedTrigger)}
 
                 <div className="trigger-period">
                   <p><strong>Период:</strong> {formatDate(selectedTrigger.period_start)} - {formatDate(selectedTrigger.period_end)}</p>
