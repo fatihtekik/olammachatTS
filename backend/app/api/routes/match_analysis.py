@@ -2,6 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_
 from sympy import re
 from app.database.db import get_db
 from app.services.match_analysis_service import MatchAnalysisService
@@ -47,9 +48,26 @@ async def upload_excel_file(
         try:
             df = pd.read_excel(io.BytesIO(contents))
             # Нормализуем заголовки сразу и один раз
-            df.rename(columns=lambda x: str(x).strip(), inplace=True)
+            df.rename(columns=lambda x: str(x).strip().replace('Счет', 'Счёт').replace('счет', 'счёт'), inplace=True)
             print(f"📊 Excel файл прочитан. Строк: {len(df)}, Столбцов: {len(df.columns)}")
-            print(f"🏷️  Столбцы: {list(df.columns)}")
+            print(f"🏷️  Столбцы: {list(df.columns)[:20]}...")
+            
+            # Проверяем наличие колонок с сетами после нормализации
+            set_cols = [c for c in df.columns if 'сет' in c.lower() and 'счёт' in c.lower()]
+            print(f"🎾 Колонки с СЧЕТАМИ сетов ({len(set_cols)}):")
+            for sc in set_cols:
+                print(f"   - {sc}")
+            
+            # DEBUG: Проверим первую строку данных для сетов 4-5
+            if len(df) > 0:
+                first_row = df.iloc[0]
+                print(f"\n🔍 DEBUG: Первая строка (сеты 4-5):")
+                for i in [4, 5]:
+                    col1 = f'Счёт {i} сета Игрок 1'
+                    col2 = f'Счёт {i} сета Игрок 2'
+                    val1 = first_row.get(col1, 'НЕТ КОЛОНКИ')
+                    val2 = first_row.get(col2, 'НЕТ КОЛОНКИ')
+                    print(f"   Сет {i}: '{val1}' : '{val2}' (тип: {type(val1).__name__})")
         except Exception as e:
             print(f"❌ Ошибка чтения Excel: {str(e)}")
             raise HTTPException(status_code=400, detail=f"Не удалось прочитать Excel файл: {str(e)}")
@@ -64,10 +82,16 @@ async def upload_excel_file(
         if missing_cols:
             raise HTTPException(status_code=400, detail=f"В Excel отсутствуют колонки: {missing_cols}")
 
-        # Находим колонку счёта
-        score_col = next((c for c in ["Счёт", "Счет", "СЧЁТ", "СЧЕТ"] if c in df.columns), None)
-        if not score_col:
-            raise HTTPException(status_code=400, detail="В Excel нет колонки 'Счёт'")
+        # Проверяем наличие счета - новый формат (приоритет) или старый
+        # ВАЖНО: проверяем ПОСЛЕ нормализации, поэтому ищем с буквой Ё
+        has_new_score_format = all(c in df.columns for c in ["Счёт матча игрока 1", "Счёт матча игрока 2"])
+        has_old_score_format = "Счёт" in df.columns
+        
+        if not has_new_score_format and not has_old_score_format:
+            print(f"❌ Доступные колонки: {list(df.columns)}")
+            raise HTTPException(status_code=400, detail="В Excel нет колонок 'Счёт матча игрока 1/2' или 'Счёт'")
+        
+        print(f"📊 Формат счета: {'НОВЫЙ (Счёт матча игрока 1/2)' if has_new_score_format else 'СТАРЫЙ (Счёт)'}")
 
         # Вспомогательные парсеры
         import re
@@ -83,42 +107,182 @@ async def upload_excel_file(
                 return name, rating
             return s.strip(), None
 
-        def split_score(val):
-            if val is None:
-                return "0:0", None
-            s = str(val)
-            # основной счёт — первые символы формата X:Y
-            m = re.match(r"\s*([0-9]+:[0-9]+)", s)
-            main = m.group(1) if m else s.strip()
-            # детали в скобках (если понадобятся позже)
-            m2 = re.search(r"\((.+)\)", s)
-            details = m2.group(0) if m2 else None  # например "(11-7, 9-11, ...)"
-            return main, details
+        def get_match_score(row):
+            """Получить счет матча по СЕТАМ из нового или старого формата"""
+            # НОВЫЙ формат: отдельные колонки "Счёт матча игрока 1" и "Счёт матча игрока 2"
+            # Это счет по СЕТАМ (например 3:1 означает 3 сета к 1)
+            # ВАЖНО: после нормализации все 'Счет' стали 'Счёт'
+            if has_new_score_format:
+                score1 = row.get('Счёт матча игрока 1')
+                score2 = row.get('Счёт матча игрока 2')
+                if pd.notna(score1) and pd.notna(score2):
+                    try:
+                        s1 = int(float(score1))
+                        s2 = int(float(score2))
+                        return f"{s1}:{s2}"
+                    except (ValueError, TypeError):
+                        pass
+            
+            # СТАРЫЙ формат: единая колонка "Счёт" 
+            # Может содержать счет типа "3:1" или детальный счет
+            if has_old_score_format:
+                val = row.get('Счёт')  # После нормализации всегда 'Счёт'
+                if pd.notna(val):
+                    s = str(val).strip()
+                    # Извлекаем счёт формата X:Y или X-Y
+                    m = re.match(r"\s*([0-9]+)[\:\-]([0-9]+)", s)
+                    if m:
+                        return f"{m.group(1)}:{m.group(2)}"
+                    return s
+            
+            return "0:0"
 
         # Конвертируем строки
         excel_data = []
         errors = []
+        
+        def safe_get(row, col_name):
+            """Безопасное получение значения из строки с проверкой на NaN"""
+            val = row.get(col_name)
+            if pd.notna(val) and str(val).strip() not in ['', 'nan']:
+                return str(val).strip()
+            return None
 
         for idx, row in df.iterrows():
             try:
-                main_score, _details = split_score(row.get(score_col))
+                # Получаем счет матча ПО СЕТАМ (новый или старый формат)
+                main_score = get_match_score(row)
+                
+                # Получаем имена и рейтинги игроков
                 p1, r1 = split_name_and_rating(row.get('Игрок 1'))
                 p2, r2 = split_name_and_rating(row.get('Игрок 2'))
+                
+                # Логируем первые 3 матча для отладки
+                if idx < 3:
+                    print(f"🔍 Матч {idx+1}: {p1} vs {p2}")
+                    print(f"   Счет по сетам: {main_score}")
+                    if has_new_score_format:
+                        print(f"   Из колонок: [{row.get('Счёт матча игрока 1')}:{row.get('Счёт матча игрока 2')}]")
+                    print(f"   Сет 1: {row.get('Счёт 1 сета Игрок 1')}:{row.get('Счёт 1 сета Игрок 2')}")
+                    print(f"   Сет 2: {row.get('Счёт 2 сета Игрок 1')}:{row.get('Счёт 2 сета Игрок 2')}")
+                    print(f"   Сет 3: {row.get('Счёт 3 сета Игрок 1')}:{row.get('Счёт 3 сета Игрок 2')}")
+                    print(f"   Сет 4: {row.get('Счёт 4 сета Игрок 1')}:{row.get('Счёт 4 сета Игрок 2')}")
+                    print(f"   Сет 5: {row.get('Счёт 5 сета Игрок 1')}:{row.get('Счёт 5 сета Игрок 2')}")
+                    print(f"   🔍 safe_get результаты:")
+                    print(f"      Сет 4 после safe_get: {safe_get(row, 'Счёт 4 сета Игрок 1')} : {safe_get(row, 'Счёт 4 сета Игрок 2')}")
+                    print(f"      Сет 5 после safe_get: {safe_get(row, 'Счёт 5 сета Игрок 1')} : {safe_get(row, 'Счёт 5 сета Игрок 2')}")
+                
+                # Если рейтинги не в именах, берем из отдельных колонок
+                if not r1 and 'Рейтинг игрока 1' in df.columns:
+                    r1_val = row.get('Рейтинг игрока 1')
+                    if pd.notna(r1_val):
+                        r1 = str(r1_val).replace(',', '.')
+                
+                if not r2 and 'Рейтинг игрока 2' in df.columns:
+                    r2_val = row.get('Рейтинг игрока 2')
+                    if pd.notna(r2_val):
+                        r2 = str(r2_val).replace(',', '.')
 
                 match_data = ExcelMatchData(
                     дата=str(row.get('Дата', '')),
-                    время=str(row.get('Время', '')) if pd.notna(row.get('Время')) else None,
+                    время=safe_get(row, 'Время'),
                     игрок_1=p1,
-                    счёт=main_score,             # <-- только основной счёт "3:2"
-                    игрок_2=p2,
-                    стадия=str(row.get('Стадия', '')) if pd.notna(row.get('Стадия')) else None,
-                    турнир=str(row.get('Турнир', '')) if pd.notna(row.get('Турнир')) else None,
-                    турнир_sl_id=str(row.get('Турнир SL-ID', '')) if pd.notna(row.get('Турнир SL-ID')) else None,
-                    sl_id=str(row.get('SL-ID', '')) if pd.notna(row.get('SL-ID')) else None,
-                    fon_id=str(row.get('FON-ID', '')) if pd.notna(row.get('FON-ID')) else None,
                     рейтинг_игрок_1=r1,
-                    рейтинг_игрок_2=r2
+                    игрок_2=p2,
+                    рейтинг_игрок_2=r2,
+                    счёт=main_score,  # Общий счет (для совместимости)
+                    
+                    # НОВЫЕ ПОЛЯ: Счет матча по сетам (ПОСЛЕ нормализации используем 'Счёт')
+                    счет_матча_игрока_1=safe_get(row, 'Счёт матча игрока 1'),
+                    счет_матча_игрока_2=safe_get(row, 'Счёт матча игрока 2'),
+                    
+                    стадия=safe_get(row, 'Стадия'),
+                    турнир=safe_get(row, 'Турнир'),
+                    турнир_sl_id=safe_get(row, 'Турнир SL-ID'),
+                    sl_id=safe_get(row, 'SL-ID'),
+                    fon_id=safe_get(row, 'FON-ID'),
+                    
+                    # Счета по сетам (ПОСЛЕ нормализации все "Счет" → "Счёт")
+                    счёт_1_сета_игрок_1=safe_get(row, 'Счёт 1 сета Игрок 1'),
+                    счёт_1_сета_игрок_2=safe_get(row, 'Счёт 1 сета Игрок 2'),
+                    счёт_2_сета_игрок_1=safe_get(row, 'Счёт 2 сета Игрок 1'),
+                    счёт_2_сета_игрок_2=safe_get(row, 'Счёт 2 сета Игрок 2'),
+                    счёт_3_сета_игрок_1=safe_get(row, 'Счёт 3 сета Игрок 1'),
+                    счёт_3_сета_игрок_2=safe_get(row, 'Счёт 3 сета Игрок 2'),
+                    счёт_4_сета_игрок_1=safe_get(row, 'Счёт 4 сета Игрок 1'),
+                    счёт_4_сета_игрок_2=safe_get(row, 'Счёт 4 сета Игрок 2'),
+                    счёт_5_сета_игрок_1=safe_get(row, 'Счёт 5 сета Игрок 1'),
+                    счёт_5_сета_игрок_2=safe_get(row, 'Счёт 5 сета Игрок 2'),
+                    
+                    # Эффективность в матче
+                    эффективность_подачи_игрока_1_в_матче=safe_get(row, 'Эффективность подачи игрока 1 в матче'),
+                    эффективность_приёма_игрока_1_в_матче=safe_get(row, 'Эффективность приёма игрока 1 в матче'),
+                    эффективность_подачи_игрока_2_в_матче=safe_get(row, 'Эффективность подачи игрока 2 в матче'),
+                    эффективность_приёма_игрока_2_в_матче=safe_get(row, 'Эффективность приёма игрока 2 в матче'),
+                    
+                    # Эффективность в сетах
+                    эффективность_подачи_игрока_1_в_1_сете=safe_get(row, 'Эффективность подачи игрока 1 в 1 сете'),
+                    эффективность_приёма_игрока_1_в_1_сете=safe_get(row, 'Эффективность приёма игрока 1 в 1 сете'),
+                    эффективность_подачи_игрока_2_в_1_сете=safe_get(row, 'Эффективность подачи игрока 2 в 1 сете'),
+                    эффективность_приёма_игрока_2_в_1_сете=safe_get(row, 'Эффективность приёма игрока 2 в 1 сете'),
+                    
+                    эффективность_подачи_игрока_1_в_2_сете=safe_get(row, 'Эффективность подачи игрока 1 в 2 сете'),
+                    эффективность_приёма_игрока_1_в_2_сете=safe_get(row, 'Эффективность приёма игрока 1 в 2 сете'),
+                    эффективность_подачи_игрока_2_в_2_сете=safe_get(row, 'Эффективность подачи игрока 2 в 2 сете'),
+                    эффективность_приёма_игрока_2_в_2_сете=safe_get(row, 'Эффективность приёма игрока 2 в 2 сете'),
+                    
+                    эффективность_подачи_игрока_1_в_3_сете=safe_get(row, 'Эффективность подачи игрока 1 в 3 сете'),
+                    эффективность_приёма_игрока_1_в_3_сете=safe_get(row, 'Эффективность приёма игрока 1 в 3 сете'),
+                    эффективность_подачи_игрока_2_в_3_сете=safe_get(row, 'Эффективность подачи игрока 2 в 3 сете'),
+                    эффективность_приёма_игрока_2_в_3_сете=safe_get(row, 'Эффективность приёма игрока 2 в 3 сете'),
+                    
+                    эффективность_подачи_игрока_1_в_4_сете=safe_get(row, 'Эффективность подачи игрока 1 в 4 сете'),
+                    эффективность_приёма_игрока_1_в_4_сете=safe_get(row, 'Эффективность приёма игрока 1 в 4 сете'),
+                    эффективность_подачи_игрока_2_в_4_сете=safe_get(row, 'Эффективность подачи игрока 2 в 4 сете'),
+                    эффективность_приёма_игрока_2_в_4_сете=safe_get(row, 'Эффективность приёма игрока 2 в 4 сете'),
+                    
+                    эффективность_подачи_игрока_1_в_5_сете=safe_get(row, 'Эффективность подачи игрока 1 в 5 сете'),
+                    эффективность_приёма_игрока_1_в_5_сете=safe_get(row, 'Эффективность приёма игрока 1 в 5 сете'),
+                    эффективность_подачи_игрока_2_в_5_сете=safe_get(row, 'Эффективность подачи игрока 2 в 5 сете'),
+                    эффективность_приёма_игрока_2_в_5_сете=safe_get(row, 'Эффективность приёма игрока 2 в 5 сете'),
+                    
+                    # Время
+                    время_матча=safe_get(row, 'Время матча'),
+                    время_1_сета=safe_get(row, 'Время 1 сета'),
+                    время_2_сета=safe_get(row, 'Время 2 сета'),
+                    время_3_сета=safe_get(row, 'Время 3 сета'),
+                    время_4_сета=safe_get(row, 'Время 4 сета'),
+                    время_5_сета=safe_get(row, 'Время 5 сета'),
+                    
+                    # Таймауты
+                    таймауты_игрок_1=safe_get(row, 'Таймауты Игрок 1'),
+                    таймауты_игрок_2=safe_get(row, 'Таймауты Игрок 2'),
+                    
+                    # Карточки
+                    жёлтые_карточки_игрок_1=safe_get(row, 'Жёлтые карточки Игрок 1'),
+                    жёлтые_карточки_игрок_2=safe_get(row, 'Жёлтые карточки Игрок 2'),
+                    красные_карточки_игрок_1=safe_get(row, 'Красные карточки Игрок 1'),
+                    красные_карточки_игрок_2=safe_get(row, 'Красные карточки Игрок 2'),
+                    
+                    # Балансы
+                    балансы_в_игре=safe_get(row, 'Балансы в игре'),
+                    баланс_в_1_сете=safe_get(row, 'Баланс в 1 сете'),
+                    баланс_в_2_сете=safe_get(row, 'Баланс в 2 сете'),
+                    баланс_в_3_сете=safe_get(row, 'Баланс в 3 сете'),
+                    баланс_в_4_сете=safe_get(row, 'Баланс в 4 сете'),
+                    баланс_в_5_сете=safe_get(row, 'Баланс в 5 сете')
                 )
+                
+                # DEBUG: Логируем первые 2 матча для проверки сетов
+                if idx < 2:
+                    print(f"\n🔍 DEBUG Матч {idx+1}:")
+                    print(f"   Счет: {safe_get(row, 'Счёт')}")
+                    print(f"   Сет 1: {match_data.счёт_1_сета_игрок_1} : {match_data.счёт_1_сета_игрок_2}")
+                    print(f"   Сет 2: {match_data.счёт_2_сета_игрок_1} : {match_data.счёт_2_сета_игрок_2}")
+                    print(f"   Сет 3: {match_data.счёт_3_сета_игрок_1} : {match_data.счёт_3_сета_игрок_2}")
+                    print(f"   Сет 4: {match_data.счёт_4_сета_игрок_1} : {match_data.счёт_4_сета_игрок_2}")
+                    print(f"   Сет 5: {match_data.счёт_5_сета_игрок_1} : {match_data.счёт_5_сета_игрок_2}")
+                
                 excel_data.append(match_data)
             except Exception as e:
                 err = f"Строка {idx+1}: {e.__class__.__name__}: {e}"
@@ -462,12 +626,12 @@ async def generate_single_trigger_ai_analysis(
                 'wins': 0, 'losses': 0, 'win_rate': 0.0, 'matches_played': 0, 'recent_form': ''
             }
 
-        # Используем внутренний метод генерации анализа (без комплексного)
+        # Используем внутренний метод генерации анализа (правильный порядок параметров)
         full_text = await service._generate_ai_analysis(
-            trigger.trigger_type,
             player.full_name if player else 'Неизвестный игрок',
             trigger.trigger_value,
-            player_stats or {}
+            player_stats,
+            provider=request.provider or "lmstudio"
         )
 
         # Ограничиваем по количеству слов
@@ -489,6 +653,113 @@ async def generate_single_trigger_ai_analysis(
         logger.error(f"Ошибка при генерации ИИ-анализа триггера {trigger_id}: {e}")
         raise HTTPException(status_code=500, detail="Ошибка генерации анализа")
 
+@router.get("/triggers-enhanced")
+async def get_triggers_enhanced(
+    player_id: Optional[str] = None,
+    trigger_type: Optional[str] = None,
+    severity_level: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    enable_ai_analysis: bool = False,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Получение триггеров с evidence (детали матчей) и опциональным AI-анализом
+    
+    Расширенный эндпоинт который возвращает триггеры вместе с доказательствами
+    из матчей (evidence) включая детали по сетам.
+    """
+    logger.info(f"📊 Получение расширенных триггеров: player_id={player_id}, type={trigger_type}, AI={enable_ai_analysis}")
+    
+    try:
+        query = db.query(PlayerTrigger).join(Player)
+        
+        if player_id:
+            query = query.filter(PlayerTrigger.player_id == player_id)
+        
+        if trigger_type:
+            query = query.filter(PlayerTrigger.trigger_type == trigger_type)
+            
+        if severity_level:
+            query = query.filter(PlayerTrigger.severity_level == severity_level)
+        
+        # Фильтр по датам если указаны
+        if start_date:
+            query = query.filter(PlayerTrigger.period_start >= start_date)
+        if end_date:
+            query = query.filter(PlayerTrigger.period_end <= end_date)
+        
+        triggers = query.order_by(PlayerTrigger.created_at.desc()).limit(limit).all()
+        
+        service = MatchAnalysisService(db)
+        result = []
+        
+        for trigger in triggers:
+            player = db.query(Player).filter(Player.id == trigger.player_id).first()
+            if not player:
+                continue
+            
+            # Получаем матчи игрока за период триггера
+            matches = db.query(Match).filter(
+                and_(
+                    Match.date >= trigger.period_start,
+                    Match.date <= trigger.period_end,
+                    or_(Match.player1_id == player.id, Match.player2_id == player.id)
+                )
+            ).order_by(Match.date.desc()).all()
+            
+            # Извлекаем evidence для триггера
+            trigger_evidence = service._extract_trigger_evidence(
+                player,
+                trigger.trigger_type,
+                matches
+            )
+            
+            # Получаем статистику игрока
+            player_stats = service._get_player_stats_for_trigger(
+                trigger.player_id,
+                trigger.period_start,
+                trigger.period_end
+            )
+            
+            # Опционально генерируем AI-анализ
+            ai_analysis = None
+            if enable_ai_analysis:
+                ai_analysis = await service._generate_ai_analysis(
+                    player.full_name,
+                    trigger.trigger_value,
+                    player_stats or {},
+                    provider="lmstudio"
+                )
+            
+            trigger_dict = {
+                'id': trigger.id,
+                'player_id': trigger.player_id,
+                'player_name': player.full_name,
+                'player_rating': player.current_rating,
+                'trigger_type': trigger.trigger_type,
+                'trigger_subtype': trigger.trigger_subtype,
+                'trigger_value': trigger.trigger_value,
+                'severity_level': trigger.severity_level,
+                'period_start': trigger.period_start,
+                'period_end': trigger.period_end,
+                'is_active': trigger.is_active,
+                'trigger_metadata': trigger.trigger_metadata,
+                'created_at': trigger.created_at,
+                'player_stats': player_stats,
+                'evidence': trigger_evidence,  # Доказательства с сетами
+                'ai_analysis': ai_analysis
+            }
+            result.append(trigger_dict)
+        
+        logger.info(f"✅ Найдено триггеров с evidence: {len(result)}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении расширенных триггеров: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
+
 @router.get("/triggers")
 async def get_all_triggers(
     player_id: Optional[str] = None,
@@ -498,7 +769,7 @@ async def get_all_triggers(
     db: Session = Depends(get_db)
 ):
     """
-    Получение списка всех триггеров с фильтрацией
+    Получение списка всех триггеров с фильтрацией (базовая версия без evidence)
     
     Публичный эндпоинт для получения триггеров с возможностью фильтрации
     по игроку, типу триггера и уровню серьезности.
@@ -677,3 +948,44 @@ async def get_trigger_types():
         "count": len(trigger_types),
         "message": "Доступные типы триггеров для анализа"
     }
+
+
+@router.get("/dashboard-stats")
+async def get_dashboard_stats(db: Session = Depends(get_db)):
+    """
+    Получить статистику для дашборда:
+    - Количество игроков в базе
+    - Количество матчей
+    - Количество активных триггеров
+    - Количество загрузок за последнюю неделю
+    """
+    try:
+        from datetime import datetime, timedelta
+        
+        # Общее количество игроков
+        total_players = db.query(Player).count()
+        
+        # Общее количество матчей
+        total_matches = db.query(Match).count()
+        
+        # Количество активных триггеров
+        active_triggers = db.query(PlayerTrigger).filter(
+            PlayerTrigger.is_active == True
+        ).count()
+        
+        # Количество загрузок за последнюю неделю (матчи созданные за последние 7 дней)
+        week_ago = datetime.now() - timedelta(days=7)
+        recent_uploads = db.query(Match).filter(
+            Match.created_at >= week_ago
+        ).count()
+        
+        return {
+            "total_players": total_players,
+            "total_matches": total_matches,
+            "active_triggers": active_triggers,
+            "recent_uploads": recent_uploads
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка получения статистики дашборда: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка получения статистики: {str(e)}")
