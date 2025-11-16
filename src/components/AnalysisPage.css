@@ -792,6 +792,34 @@
   color: white;
 }
 
+/* Кнопка сценарного анализа на баннере */
+.scenario-analysis-button {
+  padding: 8px 18px;
+  background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%);
+  border: 1px solid #ff6b35;
+  border-radius: 6px;
+  color: #1a1a1a;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 2px 8px rgba(255, 107, 53, 0.3);
+}
+
+.scenario-analysis-button:hover {
+  background: linear-gradient(135deg, #ff8c42 0%, #ffa563 100%);
+  border-color: #ff8c42;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(255, 107, 53, 0.5);
+}
+
+.scenario-analysis-button:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(255, 107, 53, 0.3);
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));

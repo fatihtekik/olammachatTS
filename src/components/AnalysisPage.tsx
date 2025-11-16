@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { analysisHistoryService } from '../services/analysisHistoryService';
 import { useInvalidateStats } from '../hooks/useDashboardStats';
+import PlayerCardModal from './PlayerCardModal';
 import './AnalysisPage.css';
 
 // === ТИПЫ ДАННЫХ ===
@@ -112,6 +113,10 @@ const AnalysisPage: React.FC = () => {
   const [singleTriggerAnalysis, setSingleTriggerAnalysis] = useState<string>('');
   const [singleTriggerLoading, setSingleTriggerLoading] = useState<boolean>(false);
   const SINGLE_TRIGGER_WORD_LIMIT = 60;
+  
+  // Состояние для модального окна сценариев
+  const [scenarioModalOpen, setScenarioModalOpen] = useState<boolean>(false);
+  const [selectedPlayerForScenario, setSelectedPlayerForScenario] = useState<{ id: string; name: string; rating?: number } | null>(null);
   
   // Состояния для фильтрации и анализа базы данных
   const [periodStart, setPeriodStart] = useState<string>('');
@@ -790,7 +795,23 @@ const AnalysisPage: React.FC = () => {
                           </div>
                           
                           <div className="player-info-section">
-                            <h3 className="player-name">{mainTrigger.player_name}</h3>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                              <h3 className="player-name">{mainTrigger.player_name}</h3>
+                              <button
+                                className="scenario-analysis-button"
+                                onClick={() => {
+                                  setSelectedPlayerForScenario({
+                                    id: playerId,
+                                    name: mainTrigger.player_name,
+                                    rating: mainTrigger.player_rating
+                                  });
+                                  setScenarioModalOpen(true);
+                                }}
+                                title="Открыть сценарный анализ"
+                              >
+                                Сценарии
+                              </button>
+                            </div>
                             
                             <div className="stats-grid">
                               <div className="stat-item">
@@ -1093,6 +1114,19 @@ const AnalysisPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      
+      {/* Модальное окно для сценарного анализа игрока */}
+      {scenarioModalOpen && selectedPlayerForScenario && (
+        <PlayerCardModal
+          playerId={selectedPlayerForScenario.id}
+          playerName={selectedPlayerForScenario.name}
+          playerRating={selectedPlayerForScenario.rating}
+          onClose={() => {
+            setScenarioModalOpen(false);
+            setSelectedPlayerForScenario(null);
+          }}
+        />
       )}
       
       </div> {/* Закрываем analysis-content */}

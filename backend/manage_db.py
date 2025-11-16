@@ -16,7 +16,8 @@ from app.models.chat import ChatSession, ChatMessage
 from app.models.match import (
     Player, PlayerStats, League, Match, MatchSet, 
     MatchCriticalMoment, PlayerTrigger, PlayerPeriodStats, 
-    PlayerRatingHistory, Holiday, TriggerConfiguration
+    PlayerRatingHistory, Holiday, TriggerConfiguration,
+    ScenarioStats, MatchScenario
 )
 
 DB_PATH = "./ollamachat.db"
@@ -47,7 +48,9 @@ def get_db_stats():
             'period_stats': session.exec(select(PlayerPeriodStats)).all().__len__(),
             'rating_history': session.exec(select(PlayerRatingHistory)).all().__len__(),
             'holidays': session.exec(select(Holiday)).all().__len__(),
-            'trigger_configs': session.exec(select(TriggerConfiguration)).all().__len__()
+            'trigger_configs': session.exec(select(TriggerConfiguration)).all().__len__(),
+            'scenario_stats': session.exec(select(ScenarioStats)).all().__len__(),
+            'match_scenarios': session.exec(select(MatchScenario)).all().__len__()
         }
 
 def show_stats():
@@ -79,6 +82,8 @@ def show_stats():
     print(f"  └─ Триггеров игроков: {stats['player_triggers']}")
     print(f"  └─ Статистика по периодам: {stats['period_stats']}")
     print(f"  └─ История рейтингов: {stats['rating_history']}")
+    print(f"  └─ Статистика сценариев: {stats['scenario_stats']}")
+    print(f"  └─ Связей матч-сценарий: {stats['match_scenarios']}")
     
     print("\n⚙️ КОНФИГУРАЦИЯ:")
     print(f"  └─ Праздников: {stats['holidays']}")
@@ -143,11 +148,13 @@ def clear_matches_only():
         matches = session.exec(select(Match)).all().__len__()
         sets = session.exec(select(MatchSet)).all().__len__()
         triggers = session.exec(select(PlayerTrigger)).all().__len__()
+        match_scenarios = session.exec(select(MatchScenario)).all().__len__()
         
         print(f"\n📊 Будет удалено:")
         print(f"  └─ Матчей: {matches}")
         print(f"  └─ Сетов: {sets}")
         print(f"  └─ Триггеров: {triggers}")
+        print(f"  └─ Связей матч-сценарий: {match_scenarios}")
         
         if matches == 0:
             print("\n✅ Матчей в БД нет!")
@@ -161,6 +168,10 @@ def clear_matches_only():
         # Удаляем триггеры
         for trigger in session.exec(select(PlayerTrigger)).all():
             session.delete(trigger)
+        
+        # Удаляем связи матч-сценарий ПЕРЕД удалением матчей
+        for match_scenario in session.exec(select(MatchScenario)).all():
+            session.delete(match_scenario)
         
         # Удаляем сеты
         for match_set in session.exec(select(MatchSet)).all():
@@ -207,10 +218,16 @@ def clear_all_data():
             session.delete(trigger)
         for moment in session.exec(select(MatchCriticalMoment)).all():
             session.delete(moment)
+        # Удаляем сценарии ПЕРЕД удалением матчей
+        for match_scenario in session.exec(select(MatchScenario)).all():
+            session.delete(match_scenario)
         for match_set in session.exec(select(MatchSet)).all():
             session.delete(match_set)
         for match in session.exec(select(Match)).all():
             session.delete(match)
+        # Удаляем статистику сценариев ПЕРЕД удалением игроков
+        for scenario_stat in session.exec(select(ScenarioStats)).all():
+            session.delete(scenario_stat)
         for stats in session.exec(select(PlayerStats)).all():
             session.delete(stats)
         for period in session.exec(select(PlayerPeriodStats)).all():

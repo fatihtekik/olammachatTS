@@ -10,7 +10,8 @@ from app.models.chat import ChatSession, ChatMessage
 from app.models.match import (
     Player, PlayerStats, League, Match, MatchSet, 
     MatchCriticalMoment, PlayerTrigger, PlayerPeriodStats, 
-    PlayerRatingHistory, Holiday, TriggerConfiguration
+    PlayerRatingHistory, Holiday, TriggerConfiguration,
+    ScenarioStats, MatchScenario
 )
 
 # Упрощенная версия - используем SQLite напрямую

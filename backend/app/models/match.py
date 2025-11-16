@@ -34,6 +34,14 @@ class Player(PlayerBase, table=True):  # РАБОТАЕТ
     )
     ratings_history: List["PlayerRatingHistory"] = Relationship(back_populates="player")
     period_stats: List["PlayerPeriodStats"] = Relationship(back_populates="player")
+    scenario_stats: List["ScenarioStats"] = Relationship(
+        back_populates="player",
+        sa_relationship_kwargs={"foreign_keys": "[ScenarioStats.player_id]"}
+    )
+    match_scenarios: List["MatchScenario"] = Relationship(
+        back_populates="player",
+        sa_relationship_kwargs={"foreign_keys": "[MatchScenario.player_id]"}
+    )
 
 class PlayerStatsBase(SQLModel):
     """Базовая модель статистики игрока"""
@@ -132,6 +140,10 @@ class Match(MatchBase, table=True):
     league: Optional[League] = Relationship(back_populates="matches")
     sets: List["MatchSet"] = Relationship(back_populates="match")
     critical_moments: List["MatchCriticalMoment"] = Relationship(back_populates="match")
+    match_scenarios: List["MatchScenario"] = Relationship(
+        back_populates="match",
+        sa_relationship_kwargs={"foreign_keys": "[MatchScenario.match_id]"}
+    )
 
 class MatchSetBase(SQLModel):
     """Базовая модель сета матча"""
@@ -314,3 +326,43 @@ class TriggerConfiguration(TriggerConfigurationBase, table=True):
             return json.loads(self.config_parameters)
         except (json.JSONDecodeError, TypeError):
             return None
+
+class ScenarioStatsBase(SQLModel):
+    """Базовая модель статистики по сценариям"""
+    scenario_code: str  # S1, S2, S3, S4, S5, S6
+    matches_total: int = Field(default=0)
+    wins: int = Field(default=0)
+    losses: int = Field(default=0)
+    fight_score: Optional[float] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ScenarioStats(ScenarioStatsBase, table=True):
+    """Модель статистики игрока по сценариям"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    player_id: str = Field(foreign_key="player.id")
+    
+    # Связь с игроком
+    player: Player = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[ScenarioStats.player_id]"}
+    )
+
+class MatchScenarioBase(SQLModel):
+    """Базовая модель связи матча и сценария"""
+    scenario_code: str  # S1, S2, S3, S4, S5, S6
+    fight_score: Optional[float] = None
+    is_win: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class MatchScenario(MatchScenarioBase, table=True):
+    """Модель связи матча со сценарием (для детализации)"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    match_id: str = Field(foreign_key="match.id")
+    player_id: str = Field(foreign_key="player.id")
+    
+    # Связи
+    match: Match = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[MatchScenario.match_id]"}
+    )
+    player: Player = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[MatchScenario.player_id]"}
+    )

@@ -2941,7 +2941,6 @@ class MatchAnalysisService:
             "set_win_rate": set_win_rate,
             "recent_form": ''.join(recent_form),
             "recent_matches": recent_matches,
-            # Расширенная статистика
             "opponent_analysis": opponent_analysis,
             "time_performance": time_performance,
             "serve_receive": serve_receive,
@@ -2950,12 +2949,10 @@ class MatchAnalysisService:
             "last20_winrate": last20_winrate,
             "trend": trend,
             "trend_icon": trend_icon,
-            # Метрики подозрительности
             "collapse_rate": collapse_rate,
             "serve_efficiency_variance": serve_efficiency_variance
         }
         
-        # Вычисляем общий балл подозрительности
         suspicion_score = self._calculate_suspicion_score(stats)
         stats["suspicion_score"] = suspicion_score
         
@@ -2965,10 +2962,9 @@ class MatchAnalysisService:
         """Генерирует ИИ-анализ для игрока (поддерживает Ollama и LM Studio)"""
         if not self._ai_analysis_enabled:
             print(f"⚠️ AI-анализ отключен для игрока {player_name}")
-            return None  # Возвращаем None вместо текста
+            return None  
         
         try:
-            # Создаем контекст для ИИ
             print(f"\n{'='*60}")
             print(f"🤖 Генерация AI-анализа")
             print(f"👤 Игрок: {player_name}")
@@ -2976,7 +2972,7 @@ class MatchAnalysisService:
             print(f"📦 Модель: {self._selected_model or 'по умолчанию'}")
             print(f"🎯 Max токенов: {self._max_tokens}")
             print(f"{'='*60}\n")
-            
+            print("AHHAHAHAHAHAHHAAHHAHAHAHAHAHHAHAHAHAHA")
             prompt = self._create_analysis_prompt(player_name, trigger_value, player_stats)
             
             # Определяем провайдера и модель из settings
@@ -2987,9 +2983,7 @@ class MatchAnalysisService:
             logger.info(f"🎯 AI-анализ: провайдер={provider}, игрок={player_name}")
             
             if provider == "lmstudio":
-                # LM Studio использует OpenAI-совместимый API
                 api_url = f"{settings.LM_STUDIO_API_URL}/v1/chat/completions"
-                # Используем GPT-OSS-20B для глубокого анализа мошенничества
                 model = self._selected_model or "gpt-oss-20b"
                 logger.info(f"🔷 Используем LM Studio для AI-анализа: {api_url}")
                 print(f"🔷 API URL: {api_url}")
@@ -3005,42 +2999,14 @@ class MatchAnalysisService:
             
             # Отправляем запрос
             print(f"📤 Отправка запроса...")
+            print("AHHAHAHAHAHAHHAAHHAHAHAHAHAHHAHAHAHAHA")
             request_data = {
                 "model": model,
                 "stream": True,
                 "messages": [
                     {
                         "role": "system", 
-                        "content": """Ты аналитик по выявлению мошенничества в профессиональном настольном теннисе.
-
-ТВОЯ МИССИЯ: Обнаружение договорных матчей и намеренных проигрышей на основе статистических аномалий.
-
-ЭКСПЕРТИЗА:
-- Математический анализ паттернов поведения
-- Выявление отклонений от нормального распределения
-- Определение психологических маркеров подставы
-- Анализ технических аномалий (подача/приём)
-
-МЕТОДОЛОГИЯ АНАЛИЗА:
-1. Ищи СТАТИСТИЧЕСКИЕ АНОМАЛИИ (резкие отклонения от средних показателей)
-2. Выявляй ПОДОЗРИТЕЛЬНЫЕ ПАТТЕРНЫ (проигрыши слабым, лидерство→крах)
-3. Оценивай ПСИХОЛОГИЧЕСКИЕ МАРКЕРЫ (таймауты, карточки, эффективность)
-4. Определяй ВЕРОЯТНОСТЬ МОШЕННИЧЕСТВА на основе совокупности факторов
-
-КРАСНЫЕ ФЛАГИ МОШЕННИЧЕСТВА:
-- Проигрыш слабым соперникам (рейтинг -200+) при победах над сильными
-- Системные проигрыши после лидерства 2:0 в сетах
-- Резкое падение эффективности подачи/приёма в критические моменты
-- Аномальное количество таймаутов или их отсутствие
-- Неестественные паттерны баланса в сетах
-
-ФОРМАТ ОТВЕТА (строго 3-4 предложения):
-1) УРОВЕНЬ РИСКА: [НИЗКИЙ/СРЕДНИЙ/ВЫСОКИЙ/КРИТИЧЕСКИЙ]
-2) КЛЮЧЕВЫЕ АНОМАЛИИ: конкретные цифры и отклонения
-3) ПОЧЕМУ ЭТОТ МАТЧ СЛИВАЮТ: какой тип триггеров тебя настораживает (если есть)
-4) РЕКОМЕНДАЦИИ: Статический анализ и сухие цифры на шанс вероятности подставного матча  .
-
-Будь объективным. Используй только факты и цифры. Без домыслов."""
+                        "content": "Ты аналитик по настольному теннису."
                     },
                     {"role": "user", "content": prompt}
                 ]
@@ -3206,16 +3172,16 @@ class MatchAnalysisService:
         # Определяем уровень риска по suspicion_score
         if suspicion_score >= 0.7:
             risk_level = "КРИТИЧЕСКИЙ"
-            risk_emoji = "🔴"
+            risk_emoji = ""
         elif suspicion_score >= 0.5:
             risk_level = "ВЫСОКИЙ"
-            risk_emoji = "🟠"
+            risk_emoji = ""
         elif suspicion_score >= 0.3:
             risk_level = "СРЕДНИЙ"
-            risk_emoji = "🟡"
+            risk_emoji = ""
         else:
             risk_level = "НИЗКИЙ"
-            risk_emoji = "🟢"
+            risk_emoji = ""
         
         # Последние матчи
         recent_matches = player_stats.get('recent_matches', [])
@@ -3229,91 +3195,27 @@ class MatchAnalysisService:
         if dop_infa:
             rag_texts = [f"  • {item['text']}" for item in dop_infa]
             rag_section = f"""
-📚 ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:
+ ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:
 {chr(10).join(rag_texts)}
 """
         
-        # Формируем расширенный промпт для ДЕТЕКТОРА МОШЕННИЧЕСТВА
         prompt = f"""
-═══════════════════════════════════════
-АНАЛИЗ НА ПРЕДМЕТ ДОГОВОРНЫХ МАТЧЕЙ
 Игрок: {player_name}
-═══════════════════════════════════════
 
-⚠️ АВТОМАТИЧЕСКИЙ СКОРИНГ ПОДОЗРИТЕЛЬНОСТИ:
-{risk_emoji} УРОВЕНЬ ПОДОЗРИТЕЛЬНОСТИ: {suspicion_score:.0%} ({risk_level})
+Статистика за период:
+- Матчей сыграно: {matches}
+- Побед: {wins} ({win_rate:.1f}%)
+- Поражений: {losses}
+- Последняя форма: {recent_form}
 
-📋 ДЕТАЛИЗАЦИЯ СКОРИНГА:
-  • Коллапсы после лидерства 2:0: {collapse_rate:.0%}
-  • Волатильность подачи (std): ±{serve_variance:.0%}
-  • Винрейт против слабых: {opponent_analysis.get('weak', {}).get('winrate', 0):.0%}
-  • Разница день/ночь: {abs(time_performance.get('night', {}).get('winrate', 50) - time_performance.get('day', {}).get('winrate', 50)):.0%}п.п.
-  • Разница фаворит/андердог: {abs(role_performance.get('favorite', {}).get('winrate', 0) - role_performance.get('underdog', {}).get('winrate', 0)):.0%}п.п.
-
-📊 БАЗОВАЯ СТАТИСТИКА:
-• Матчей: {matches} | Побед: {wins} ({win_rate:.1f}%) | Поражений: {losses}
-• Форма (последние 5): {recent_form}
-• Сетов: {sets_won}:{sets_lost} ({set_win_rate:.1f}% побед)
-
-🎯 РЕЗУЛЬТАТЫ ПРОТИВ СОПЕРНИКОВ РАЗНОЙ СИЛЫ:
-• Сильнее на 200+ рейтинга: {opponent_analysis.get('strong', {}).get('matches', 0)} матчей → {opponent_analysis.get('strong', {}).get('winrate', 0):.1f}% побед
-• Примерно равные (±200): {opponent_analysis.get('equal', {}).get('matches', 0)} матчей → {opponent_analysis.get('equal', {}).get('winrate', 0):.1f}% побед  
-• Слабее на 200+ рейтинга: {opponent_analysis.get('weak', {}).get('matches', 0)} матчей → {opponent_analysis.get('weak', {}).get('winrate', 0):.1f}% побед
-⚠️ АНОМАЛИЯ: Проверь если винрейт против СЛАБЫХ ниже чем против СИЛЬНЫХ!
-
-⏰ ПРОИЗВОДИТЕЛЬНОСТЬ ПО ВРЕМЕНИ СУТОК:
-• Утро (6-12): {time_performance.get('morning', {}).get('matches', 0)} матчей → {time_performance.get('morning', {}).get('winrate', 0):.1f}% побед
-• День (12-18): {time_performance.get('day', {}).get('matches', 0)} матчей → {time_performance.get('day', {}).get('winrate', 0):.1f}% побед
-• Вечер (18-22): {time_performance.get('evening', {}).get('matches', 0)} матчей → {time_performance.get('evening', {}).get('winrate', 0):.1f}% побед
-• Ночь (22-6): {time_performance.get('night', {}).get('matches', 0)} матчей → {time_performance.get('night', {}).get('winrate', 0):.1f}% побед
-⚠️ АНОМАЛИЯ: Резкие провалы в конкретное время могут указывать на договоренности!
-
-🏓 ТЕХНИЧЕСКАЯ ЭФФЕКТИВНОСТЬ (подача/приём):
-• Средняя подача: {serve_receive.get('serve', {}).get('avg', 0):.1f}% | приём: {serve_receive.get('receive', {}).get('avg', 0):.1f}%
-• В ВЫИГРАННЫХ: подача {serve_receive.get('serve', {}).get('in_wins', 0):.1f}% | приём {serve_receive.get('receive', {}).get('in_wins', 0):.1f}%
-• В ПРОИГРАННЫХ: подача {serve_receive.get('serve', {}).get('in_losses', 0):.1f}% | приём {serve_receive.get('receive', {}).get('in_losses', 0):.1f}%
-⚠️ АНОМАЛИЯ: Разница >20% между победами и поражениями может означать намеренное снижение!
-
-🧠 ПСИХОЛОГИЧЕСКИЙ ПРОФИЛЬ:
-• Как ФАВОРИТ: {role_performance.get('favorite', {}).get('matches', 0)} матчей → {role_performance.get('favorite', {}).get('winrate', 0):.1f}% побед
-• Как АУТСАЙДЕР: {role_performance.get('underdog', {}).get('matches', 0)} матчей → {role_performance.get('underdog', {}).get('winrate', 0):.1f}% побед
-⚠️ АНОМАЛИЯ: Если фаворит проигрывает чаще чем аутсайдер - КРАСНЫЙ ФЛАГ!
-
-📈 ДИНАМИКА ФОРМЫ:
-• Последние 10 матчей: {last10_winrate:.1f}%
-• Последние 20 матчей: {last20_winrate:.1f}%
-• Тренд: {trend} {trend_icon}
-⚠️ АНОМАЛИЯ: Резкие провалы без объективных причин!
-
-💡 ПОСЛЕДНИЕ 5 МАТЧЕЙ (детально):
-{recent_matches_text}
-
-🔥 ОБНАРУЖЕННЫЙ ТРИГГЕР/ПАТТЕРН:
+Обнаруженные триггеры:
 {trigger_value}
 
-{rag_section}
+Дополнительная информация из базы знаний:
+{chr(10).join([item["text"] for item in dop_infa])}
 
-═══════════════════════════════════════
-ЗАДАЧА:
-═══════════════════════════════════════
-
-Проанализируй игрока на ВЕРОЯТНОСТЬ ДОГОВОРНЫХ МАТЧЕЙ или НАМЕРЕННЫХ ПРОИГРЫШЕЙ.
-
-УЧИТЫВАЙ автоматический скоринг подозрительности: {suspicion_score:.0%} ({risk_level})
-
-СТРОГО 3-4 ПРЕДЛОЖЕНИЯ в формате:
-
-🚨 УРОВЕНЬ РИСКА: [НИЗКИЙ/СРЕДНИЙ/ВЫСОКИЙ/КРИТИЧЕСКИЙ]
-📊 КЛЮЧЕВЫЕ АНОМАЛИИ: [перечисли конкретные цифры и отклонения]
-🎯 ВЕРОЯТНАЯ СХЕМА: [какой тип подставы, если обнаружен]
-✅ РЕКОМЕНДАЦИИ: [что проверить дополнительно]
-
-Будь объективным. Только факты. Без эмоций.
+Сделай профессиональный анализ игрока в 2-3 предложениях: объясни возможные причины проблем и дай рекомендации.
 """
-        print("🚀 Промпт для детектора мошенничества:")
-        print("=" * 80)
-        print(prompt)
-        print("=" * 80)
         
         return prompt
 
