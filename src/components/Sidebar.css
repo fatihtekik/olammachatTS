@@ -98,6 +98,57 @@
   z-index: 1;
 }
 
+.nav-group {
+  position: relative;
+}
+
+.nav-item .chevron-icon {
+  margin-left: auto;
+  font-size: 0.9rem;
+  transition: transform 0.2s ease;
+}
+
+.nav-submenu {
+  background: rgba(0, 0, 0, 0.15);
+  border-left: 2px solid var(--orange-primary);
+  margin-left: 22px;
+  overflow: hidden;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 200px;
+  }
+}
+
+.nav-subitem {
+  display: flex;
+  align-items: center;
+  padding: 12px 22px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: all 0.2s ease;
+  font-size: 0.95rem;
+}
+
+.nav-subitem:hover {
+  background: rgba(255, 107, 0, 0.1);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.nav-subitem.active {
+  background: rgba(255, 107, 0, 0.2);
+  color: var(--orange-primary);
+  font-weight: 600;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
   .sidebar {

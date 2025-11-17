@@ -5,6 +5,7 @@ import './App.css';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import AnalysisPage from './components/AnalysisPage';
+import H2HAnalysisPage from './components/H2HAnalysisPage';
 import AnalysisHistory from './components/AnalysisHistory';
 import ChatPage from './components/ChatPage';
 import ExcelUploadPage from './components/ExcelUploadPage';
@@ -635,6 +636,7 @@ function App() {
             />
             <Route path="/upload" element={<ExcelUploadPage />} />
             <Route path="/analysis" element={<AnalysisPage />} />
+            <Route path="/h2h-analysis" element={<H2HAnalysisPage />} />
             <Route path="/history" element={<AnalysisHistory />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

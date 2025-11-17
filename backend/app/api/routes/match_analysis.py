@@ -989,3 +989,271 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Ошибка получения статистики дашборда: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Ошибка получения статистики: {str(e)}")
+
+
+@router.get("/h2h/{player1_id}/{player2_id}")
+async def get_h2h_analysis(
+    player1_id: str,
+    player2_id: str,
+    match_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    try:
+        from datetime import datetime
+        from app.models.match import MatchSet
+        
+        player1 = db.query(Player).filter(Player.id == player1_id).first()
+        player2 = db.query(Player).filter(Player.id == player2_id).first()
+        
+        if not player1 or not player2:
+            raise HTTPException(status_code=404, detail="Один или оба игрока не найдены")
+        
+        query = db.query(Match).filter(
+            or_(
+                and_(Match.player1_id == player1_id, Match.player2_id == player2_id),
+                and_(Match.player1_id == player2_id, Match.player2_id == player1_id)
+            )
+        )
+        
+        if match_date:
+            try:
+                target_date = datetime.strptime(match_date, "%Y-%m-%d").date()
+                query = query.filter(Match.date == target_date)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Неверный формат даты. Используйте YYYY-MM-DD")
+        
+        matches = query.order_by(Match.date.desc()).all()
+        
+        if not matches:
+            return {
+                "player1": {
+                    "id": player1.id,
+                    "full_name": player1.full_name,
+                    "current_rating": player1.current_rating,
+                    "triggers": []
+                },
+                "player2": {
+                    "id": player2.id,
+                    "full_name": player2.full_name,
+                    "current_rating": player2.current_rating,
+                    "triggers": []
+                },
+                "matches": [],
+                "ai_analysis": "Матчи между этими игроками не найдены"
+            }
+        
+        matches_data = []
+        for match in matches:
+            sets = db.query(MatchSet).filter(
+                MatchSet.match_id == match.id
+            ).order_by(MatchSet.set_number).all()
+            
+            is_player1_first = match.player1_id == player1_id
+            
+            match_triggers_p1 = db.query(PlayerTrigger).filter(
+                PlayerTrigger.player_id == player1_id,
+                PlayerTrigger.match_id == match.id
+            ).all()
+            
+            match_triggers_p2 = db.query(PlayerTrigger).filter(
+                PlayerTrigger.player_id == player2_id,
+                PlayerTrigger.match_id == match.id
+            ).all()
+            
+            sets_details = []
+            for s in sets:
+                sets_details.append({
+                    "set_number": s.set_number,
+                    "player1_points": s.player1_points if is_player1_first else s.player2_points,
+                    "player2_points": s.player2_points if is_player1_first else s.player1_points
+                })
+            
+            winner_id = match.winner_id
+            match_data = {
+                "id": match.id,
+                "date": match.date.isoformat(),
+                "score": match.score,
+                "stage": match.stage,
+                "league_id": match.league_id,
+                "winner_id": winner_id,
+                "sets": sets_details,
+                "player1_triggers": [{"type": t.trigger_type, "severity": t.severity_level} for t in match_triggers_p1],
+                "player2_triggers": [{"type": t.trigger_type, "severity": t.severity_level} for t in match_triggers_p2],
+                "serve_efficiency_p1": match.serve_efficiency_p1 if is_player1_first else match.serve_efficiency_p2,
+                "receive_efficiency_p1": match.receive_efficiency_p1 if is_player1_first else match.receive_efficiency_p2,
+                "serve_efficiency_p2": match.serve_efficiency_p2 if is_player1_first else match.serve_efficiency_p1,
+                "receive_efficiency_p2": match.receive_efficiency_p2 if is_player1_first else match.receive_efficiency_p1
+            }
+            matches_data.append(match_data)
+        
+        player1_triggers = db.query(PlayerTrigger).filter(
+            PlayerTrigger.player_id == player1_id,
+            PlayerTrigger.is_active == True
+        ).limit(5).all()
+        
+        player2_triggers = db.query(PlayerTrigger).filter(
+            PlayerTrigger.player_id == player2_id,
+            PlayerTrigger.is_active == True
+        ).limit(5).all()
+        
+        player1_wins = sum(1 for m in matches if m.winner_id == player1_id)
+        player2_wins = sum(1 for m in matches if m.winner_id == player2_id)
+        
+        ai_analysis = f"Анализ {len(matches)} матч{'а' if len(matches) < 5 else 'ей'} между {player1.full_name} и {player2.full_name}. "
+        ai_analysis += f"Счёт встреч: {player1_wins}:{player2_wins}. "
+        
+        if player1_wins > player2_wins:
+            ai_analysis += f"{player1.full_name} доминирует в личных встречах. "
+        elif player2_wins > player1_wins:
+            ai_analysis += f"{player2.full_name} доминирует в личных встречах. "
+        else:
+            ai_analysis += "Равное противостояние. "
+        
+        return {
+            "player1": {
+                "id": player1.id,
+                "full_name": player1.full_name,
+                "current_rating": player1.current_rating,
+                "triggers": [{"type": t.trigger_type, "severity": t.severity_level} for t in player1_triggers]
+            },
+            "player2": {
+                "id": player2.id,
+                "full_name": player2.full_name,
+                "current_rating": player2.current_rating,
+                "triggers": [{"type": t.trigger_type, "severity": t.severity_level} for t in player2_triggers]
+            },
+            "matches": matches_data,
+            "ai_analysis": ai_analysis.strip()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка H2H анализа: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка анализа: {str(e)}")
+
+
+@router.get("/h2h-by-date/{date}")
+async def get_h2h_by_date(
+    date: str,
+    db: Session = Depends(get_db)
+):
+    try:
+        from datetime import datetime
+        from app.models.match import MatchSet
+        from collections import defaultdict
+        
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Неверный формат даты. Используйте YYYY-MM-DD")
+        
+        matches = db.query(Match).filter(Match.date == target_date).all()
+        
+        if not matches:
+            return {
+                "date": date,
+                "pairs": [],
+                "total_matches": 0
+            }
+        
+        pairs_dict = defaultdict(lambda: {
+            "player1": None,
+            "player2": None,
+            "matches": [],
+            "player1_wins": 0,
+            "player2_wins": 0
+        })
+        
+        for match in matches:
+            player1 = db.query(Player).filter(Player.id == match.player1_id).first()
+            player2 = db.query(Player).filter(Player.id == match.player2_id).first()
+            
+            if not player1 or not player2:
+                continue
+            
+            pair_key = tuple(sorted([match.player1_id, match.player2_id]))
+            
+            if pairs_dict[pair_key]["player1"] is None:
+                if pair_key[0] == match.player1_id:
+                    pairs_dict[pair_key]["player1"] = player1
+                    pairs_dict[pair_key]["player2"] = player2
+                else:
+                    pairs_dict[pair_key]["player1"] = player2
+                    pairs_dict[pair_key]["player2"] = player1
+            
+            sets = db.query(MatchSet).filter(
+                MatchSet.match_id == match.id
+            ).order_by(MatchSet.set_number).all()
+            
+            match_triggers_p1 = db.query(PlayerTrigger).filter(
+                PlayerTrigger.player_id == match.player1_id,
+                PlayerTrigger.match_id == match.id
+            ).all()
+            
+            match_triggers_p2 = db.query(PlayerTrigger).filter(
+                PlayerTrigger.player_id == match.player2_id,
+                PlayerTrigger.match_id == match.id
+            ).all()
+            
+            is_player1_first = pair_key[0] == match.player1_id
+            
+            sets_details = []
+            for s in sets:
+                sets_details.append({
+                    "set_number": s.set_number,
+                    "player1_points": s.player1_points if is_player1_first else s.player2_points,
+                    "player2_points": s.player2_points if is_player1_first else s.player1_points
+                })
+            
+            match_data = {
+                "id": match.id,
+                "score": match.score,
+                "stage": match.stage,
+                "winner_id": match.winner_id,
+                "sets": sets_details,
+                "player1_triggers": [{"type": t.trigger_type, "severity": t.severity_level} for t in (match_triggers_p1 if is_player1_first else match_triggers_p2)],
+                "player2_triggers": [{"type": t.trigger_type, "severity": t.severity_level} for t in (match_triggers_p2 if is_player1_first else match_triggers_p1)]
+            }
+            
+            pairs_dict[pair_key]["matches"].append(match_data)
+            
+            if match.winner_id == pairs_dict[pair_key]["player1"].id:
+                pairs_dict[pair_key]["player1_wins"] += 1
+            elif match.winner_id == pairs_dict[pair_key]["player2"].id:
+                pairs_dict[pair_key]["player2_wins"] += 1
+        
+        pairs_result = []
+        for pair_key, pair_data in pairs_dict.items():
+            if pair_data["player1"] is None or pair_data["player2"] is None:
+                continue
+                
+            pairs_result.append({
+                "player1": {
+                    "id": pair_data["player1"].id,
+                    "full_name": pair_data["player1"].full_name,
+                    "current_rating": pair_data["player1"].current_rating
+                },
+                "player2": {
+                    "id": pair_data["player2"].id,
+                    "full_name": pair_data["player2"].full_name,
+                    "current_rating": pair_data["player2"].current_rating
+                },
+                "matches": pair_data["matches"],
+                "player1_wins": pair_data["player1_wins"],
+                "player2_wins": pair_data["player2_wins"],
+                "total_matches": len(pair_data["matches"])
+            })
+        
+        return {
+            "date": date,
+            "pairs": pairs_result,
+            "total_matches": len(matches)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка анализа по дате: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка анализа: {str(e)}")
+
