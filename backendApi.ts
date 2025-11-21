@@ -1,4 +1,4 @@
-import { Message, ChatSession } from '../types/chat';
+
 
 // Базовый URL для API
 const API_BASE_URL = 'http://localhost:8000/api/v1';
@@ -147,22 +147,24 @@ export const chatAPI = {
     }
   },
 
-  // Получение конкретной сессии по ID  async getSessionById(sessionId: string) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/chat-sessions/${sessionId}/`, {
-        headers: getHeaders(),
-      });
+// Получение конкретной сессии по ID
+async getSessionById(sessionId: string) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/chat-sessions/${sessionId}/`, {
+      headers: getHeaders(),
+    });
 
-      if (!response.ok) {
-        throw new Error('Ошибка при получении сессии чата');
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Ошибка получения сессии:', error);
-      throw error;
+    if (!response.ok) {
+      throw new Error('Ошибка при получении сессии чата');
     }
-  },
+
+    return await response.json();
+  } catch (error) {
+    console.error('Ошибка получения сессии:', error);
+    throw error;
+  }
+},
+
 
   // Создание новой сессии
   async createSession(title: string, model: string) {
@@ -186,7 +188,8 @@ export const chatAPI = {
       throw error;
     }
   },
-  // Обновление сессии  async updateSession(sessionId: string, title?: string, model?: string) {
+  // Обновление сессии  
+  async updateSession(sessionId: string, title?: string, model?: string) {
     try {
       const updateData: { title?: string; model?: string } = {};
       if (title) updateData.title = title;
@@ -209,7 +212,8 @@ export const chatAPI = {
     }
   },
 
-  // Удаление сессии  async deleteSession(sessionId: string) {
+  // Удаление сессии  
+  async deleteSession(sessionId: string) {
     try {
       const response = await fetch(`${API_BASE_URL}/chat-sessions/${sessionId}/`, {
         method: 'DELETE',

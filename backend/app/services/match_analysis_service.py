@@ -1643,60 +1643,98 @@ class MatchAnalysisService:
         return triggers
 
 
-    async def _analyze_won_2_lost_3rd_set( #РАБОТАЕТ
-    self, player: Player, matches: List[Match], start_date: date, end_date: date
-) -> List[PlayerTrigger]:
-        """Анализ случаев, когда игрок ВЕЛ 2:0 ПО СЕТАМ, но ПРОИГРАЛ МАТЧ 2:3"""
-        triggers = []
+    async def _analyze_won_2_lost_3rd_set(
+            self, player: Player, matches: List[Match], start_date: date, end_date: date,
+            threshold_percentage: float = 20.0   # минимум % таких поражений
+        ) -> List[PlayerTrigger]:
+            """
+            Анализ случаев, когда игрок вел 2:0, но проиграл 2:3.
+            Триггер создается, только если такие матчи составляют значимый процент
+            от всех поражений игрока.
+            """
 
-        for match in matches:
-            if not (start_date <= match.date <= end_date):
-                continue
+            triggers = []
 
-            # Проверяем только проигранные матчи
-            if match.winner_id == player.id:
-                continue
+            # --- 1) Фильтруем поражения игрока ---
+            defeats = [
+                m for m in matches
+                if start_date <= m.date <= end_date
+                and m.winner_id is not None
+                and m.winner_id != player.id
+                and (m.player1_id == player.id or m.player2_id == player.id)
+            ]
 
-            # Определяем счет игрока по сетам
-            is_player1 = match.player1_id == player.id
-            player_sets = match.sets_player1 if is_player1 else match.sets_player2
-            opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+            total_defeats = len(defeats)
+            if total_defeats < 3:
+                return []  # слишком мало данных как и в defeat_0_3
 
-            # ТРИГГЕР: Вел 2:0, проиграл 2:3
-            if player_sets == 2 and opponent_sets == 3:
-                # Получаем все сеты матча
-                sets = sorted(
-                    self.db.query(MatchSet).filter(MatchSet.match_id == match.id).all(),
-                    key=lambda s: s.set_number
+            collapse_count = 0
+            collapse_match_ids = []
+
+            # --- 2) Из поражений выбираем те, где было 2:0 → 2:3 ---
+            for match in defeats:
+                is_p1 = match.player1_id == player.id
+                player_sets = match.sets_player1 if is_p1 else match.sets_player2
+                opp_sets = match.sets_player2 if is_p1 else match.sets_player1
+
+                if player_sets == 2 and opp_sets == 3:
+                    sets = sorted(
+                        self.db.query(MatchSet).filter(MatchSet.match_id == match.id).all(),
+                        key=lambda s: s.set_number
+                    )
+                    if len(sets) >= 3 and sets[0].winner_id == player.id and sets[1].winner_id == player.id:
+                        collapse_count += 1
+                        collapse_match_ids.append(match.id)
+
+            if collapse_count == 0:
+                return []
+
+            # --- 3) Считаем процент ---
+            percentage = (collapse_count / total_defeats) * 100
+
+            # --- 4) Проверяем порог ---
+            if percentage < threshold_percentage:
+                return []
+
+            # --- 5) Severity по процентам ---
+            if percentage >= 50:
+                severity = 3
+            elif percentage >= 30:
+                severity = 2
+            else:
+                severity = 1
+
+            # --- Создаем один триггер ---
+            trigger = PlayerTrigger(
+                player_id=player.id,
+                trigger_type="won_2_lost_3rd_set",
+                trigger_subtype="led_2_0_lost_match",
+                trigger_value=(
+                    f"Поражения после лидерства 2:0 — {collapse_count} из {total_defeats} "
+                    f"({percentage:.1f}%)"
+                ),
+                severity_level=severity,
+                period_start=start_date,
+                period_end=end_date,
+                is_active=True
+            )
+
+            trigger.set_metadata({
+                "collapse_count": collapse_count,
+                "total_defeats": total_defeats,
+                "percentage": percentage,
+                "match_ids": collapse_match_ids,
+                "recommendation": (
+                    "Игрок систематически теряет матчи после уверенного старта 2:0. "
+                    "Требуется психологическая стабилизация и повышение физподготовки."
                 )
+            })
 
-                if len(sets) >= 3:
-                    # Проверяем что первые 2 сета выиграл
-                    first_set_won = sets[0].winner_id == player.id
-                    second_set_won = sets[1].winner_id == player.id
+            self.db.add(trigger)
+            self.db.commit()
 
-                    if first_set_won and second_set_won:
-                        trigger = PlayerTrigger(
-                            player_id=player.id,
-                            trigger_type="won_2_lost_3rd_set",
-                            trigger_subtype="led_2_0_lost_match",
-                            trigger_value=f"Вел 2:0 по сетам, но проиграл матч 2:3 ({match.id})",
-                            severity_level=3,  # Высокая серьезность!
-                            period_start=start_date,
-                            period_end=end_date,
-                            is_active=True
-                        )
-                        trigger.set_metadata({
-                            "match_id": match.id,
-                            "final_score": f"{player_sets}:{opponent_sets}",
-                            "recommendation": "КРИТИЧНО: Неспособность довести победу до конца. Психологический срыв после лидерства 2:0"
-                        })
+            return [trigger]
 
-                        self.db.add(trigger)
-                        triggers.append(trigger)
-
-        self.db.commit()
-        return triggers
 
 
     
@@ -3006,7 +3044,7 @@ class MatchAnalysisService:
                 "messages": [
                     {
                         "role": "system", 
-                        "content": "Ты аналитик по настольному теннису."
+                        "content": "Ты аналитик по настольному теннису. Пиши на русском языке подробный анализ причин нестандартного поведения игрока на основе предоставленных статистических данных. Приводи конкретные примеры из статистики. НЕ ПИШИ СВОИ РАССУЖДЕНИЯ. Отвечай только на основе предоставленных данных. Если данных недостаточно, честно скажи, что не можешь сделать выводы."
                     },
                     {"role": "user", "content": prompt}
                 ]
@@ -3219,97 +3257,3 @@ class MatchAnalysisService:
         
         return prompt
 
-    # async def _generate_player_comprehensive_analysis(self, player_name: str, player_triggers: List[PlayerTrigger], player_stats: Dict) -> str:
-    #     """Генерирует комплексный ИИ-анализ для всех триггеров игрока"""
-    #     if not self._ai_analysis_enabled:
-    #         return f"Комплексный анализ игрока {player_name}"
-        
-    #     try:
-    #         # Создаем промпт для комплексного анализа
-    #         prompt = self._create_comprehensive_analysis_prompt(player_name, player_triggers, player_stats)
-            
-    #         # Вызываем функцию стриминга из ollama_service
-    #         async with httpx.AsyncClient(timeout=30.0) as client:
-    #             print("FDFDFDFDFDFDFD")
-    #             async with client.stream("POST", "http://localhost:11434/api/chat", json={
-    #                 "model": "llama3.1:8b",
-    #                 "stream": True,
-    #                 "messages": [
-    #                     {"role": "system", "content": "Ты аналитик по выявлению мошенничества в спорте. Твоя задача - анализировать подозрительные паттерны в игре спортсменов и выявлять признаки договорных матчей или намеренного проигрыша."},
-    #                     {"role": "user", "content": prompt}
-    #                 ]
-    #             }) as response:
-    #                 analysis_text = ""
-    #                 async for line in response.aiter_lines():
-    #                     if not line.strip():
-    #                         continue
-    #                     try:
-    #                         data = json.loads(line)
-    #                         if "message" in data and "content" in data["message"]:
-    #                             analysis_text += data["message"]["content"]
-    #                     except json.JSONDecodeError:
-    #                         continue
-                    
-    #                 return analysis_text if analysis_text.strip() else f"Комплексный анализ игрока {player_name}"
-                    
-        # except Exception as e:
-        #     logger.error(f"Ошибка генерации комплексного ИИ-анализа: {e}")
-        #     return f"Не удалось сгенерировать комплексный анализ для игрока {player_name}"
-
-#     def _create_comprehensive_analysis_prompt(self, player_name: str, player_triggers: List[PlayerTrigger], player_stats: Dict) -> str:
-#         """Создает промпт для комплексного ИИ-анализа всех триггеров игрока"""
-        
-#         # Описания триггеров с точки зрения мошенничества
-#         trigger_descriptions = {
-#             "top_performers": "стабильно высокие результаты",
-#             "defeat_0_3": "подозрительно частые разгромные поражения",
-#             "won_2_lost_3rd_set": "намеренные проигрыши после лидерства 2:0",
-#             "early_final_exit_advanced": "подозрительные досрочные сдачи в финалах",
-#             "led_1_set_lost_match": "потеря преимущества в ключевые моменты",
-#             "led_2_sets_lost_match": "крайне подозрительные развороты после лидерства 2:0",
-#             "psychological_breakdown": "неестественные психологические срывы",
-#             "comeback_inability": "подозрительная неспособность к возвращению в игру",
-#             "pressure_situations": "провалы в важных матчах",
-#             "losers_50_percent": "аномально низкий процент побед"
-#         }
-        
-#         wins = player_stats.get('wins', 0)
-#         losses = player_stats.get('losses', 0)
-#         win_rate = player_stats.get('win_rate', 0)
-#         matches = player_stats.get('matches_played', 0)
-#         recent_form = player_stats.get('recent_form', '')
-#         sets_won = player_stats.get('sets_won', 0)
-#         sets_lost = player_stats.get('sets_lost', 0)
-        
-#         # Формируем список проблем
-#         problems_list = []
-#         positive_aspects = []
-        
-#         for trigger in player_triggers:
-#             description = trigger_descriptions.get(trigger.trigger_type, trigger.trigger_type)
-#             if trigger.trigger_type == 'top_performers':
-#                 positive_aspects.append(f"- {description}: {trigger.trigger_value}")
-#             else:
-#                 problems_list.append(f"- {description}: {trigger.trigger_value}")
-        
-#         problems_text = "\n".join(problems_list) if problems_list else "Серьезных проблем не выявлено"
-#         positives_text = "\n".join(positive_aspects) if positive_aspects else ""
-        
-#         prompt = f"""
-# АНАЛИЗ ПОДОЗРИТЕЛЬНОГО ПОВЕДЕНИЯ ИГРОКА: {player_name}
-
-# СТАТИСТИКА ЗА ПЕРИОД:
-# - Матчей сыграно: {matches}
-# - Побед: {wins} ({win_rate:.1f}%)
-# - Поражений: {losses}
-# - Соотношение сетов: {sets_won}:{sets_lost}
-# - Последняя форма: {recent_form}
-
-# ВЫЯВЛЕННЫЕ ПОДОЗРИТЕЛЬНЫЕ ПАТТЕРНЫ:
-# {problems_text}
-
-# ПОЛОЖИТЕЛЬНЫЕ ПОКАЗАТЕЛИ:
-# {positives_text}
-
-# Проанализируй этого игрока на предмет возможного мошенничества или договорных матчей. Укажи уровень подозрительности (низкий/средний/высокий) и объясни, какие паттерны могут указывать на намеренные проигрыши или подставную игру. Дай оценку в 3-4 предложениях.
-# """

@@ -30,7 +30,11 @@ class TokenData(BaseModel):
     user_id: Optional[str] = None
 
 # Контекст для хеширования паролей
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(
+    schemes=["argon2"],
+    deprecated="auto"
+)
+
 
 # OAuth2 схема для получения токена из заголовка
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")

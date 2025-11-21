@@ -9,7 +9,11 @@ if TYPE_CHECKING:
     from app.models.chat import ChatSession
 
 # Создаем контекст для хеширования паролей
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(
+    schemes=["argon2"],
+    deprecated="auto"
+)
+
 
 class UserBase(SQLModel):
     """Базовая модель пользователя"""
