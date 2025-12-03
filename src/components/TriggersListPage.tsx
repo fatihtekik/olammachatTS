@@ -12,7 +12,8 @@ interface Trigger {
   severity_level: number;
   period_start: string;
   period_end: string;
-  is_active: boolean;
+  // is_active: boolean;
+  is_pair: boolean;
   trigger_metadata?: any;
   created_at: string;
   ai_analysis?: string;
@@ -690,8 +691,10 @@ const TriggersListPage: React.FC = () => {
                   <span className="created-date">
                     Обнаружен: {formatDate(trigger.created_at)}
                   </span>
-                  <span className={`status ${trigger.is_active ? 'active' : 'inactive'}`}>
-                    {trigger.is_active ? 'Активный' : 'Неактивный'}
+                  {/* <span className={`status ${trigger.is_active ? 'active' : 'inactive'}`}> */}
+                  {/* {trigger.is_active ? 'Активный' : 'Неактивный'} */}
+                  <span className={`status ${trigger.is_pair ? 'active' : 'inactive'}`}>
+                    {trigger.is_pair ? 'Активный' : 'Неактивный'}
                   </span>
                 </div>
               </div>

@@ -981,7 +981,8 @@ class MatchAnalysisService:
                     "severity_level": trigger.severity_level,
                     "period_start": trigger.period_start,
                     "period_end": trigger.period_end,
-                    "is_active": trigger.is_active,
+                    # "is_active": trigger.is_active,
+                    "is_pair": trigger.is_pair,
                     "trigger_metadata": trigger.trigger_metadata,
                     "created_at": trigger.created_at,
                     "player_stats": player_stats if player_stats else None,
@@ -1015,7 +1016,8 @@ class MatchAnalysisService:
                 severity_level=1,  # Позитивный триггер
                 period_start=start_date,
                 period_end=end_date,
-                is_active=True
+                # is_active=True
+                is_pair=False
             )
             trigger.set_metadata({
                 "win_rate": win_rate,
@@ -1047,7 +1049,8 @@ class MatchAnalysisService:
                         severity_level=severity,
                         period_start=start_date,
                         period_end=end_date,
-                        is_active=True
+                        # is_active=True
+                        is_pair=False
                     )
                     trigger.set_metadata({
                         "loss_rate": loss_rate,
@@ -1110,7 +1113,8 @@ class MatchAnalysisService:
                 severity_level=severity,
                 period_start=start_date,
                 period_end=end_date,
-                is_active=True
+                # is_active=True
+                is_pair=False
             )
             trigger.set_metadata({
                 "current_streak": current_streak,
@@ -1253,7 +1257,8 @@ class MatchAnalysisService:
                 severity_level=2,
                 period_start=start_date,
                 period_end=end_date,
-                is_active=True
+                # is_active=True
+                is_pair=False
             )
             trigger.set_metadata({
                 "poor_performance_count": poor_performance_after_holidays,
@@ -1356,7 +1361,8 @@ class MatchAnalysisService:
                             severity_level=2 if weighted_loss_rate >= 80 else 1,
                             period_start=start_date,
                             period_end=end_date,
-                            is_active=True
+                            # is_active=True
+                            is_pair=False
                         )
                         trigger.set_metadata({
                             "time_period": period_name,
@@ -1628,7 +1634,8 @@ class MatchAnalysisService:
                     severity_level=severity,
                     period_start=start_date,
                     period_end=end_date,
-                    is_active=True
+                    # is_active=True
+                    is_pair=False
                 )
                 trigger.set_metadata({
                     "defeat_0_3_count": defeat_0_3_count,
@@ -1716,7 +1723,8 @@ class MatchAnalysisService:
                 severity_level=severity,
                 period_start=start_date,
                 period_end=end_date,
-                is_active=True
+                # is_active=True
+                is_pair=False
             )
 
             trigger.set_metadata({
@@ -1778,7 +1786,8 @@ class MatchAnalysisService:
                     severity_level=severity,
                     period_start=start_date,
                     period_end=end_date,
-                    is_active=True
+                    # is_active=True
+                    is_pair=False
                 )
                 trigger.set_metadata({
                     "early_exits": early_exits,
@@ -1836,7 +1845,8 @@ class MatchAnalysisService:
                     severity_level=severity,
                     period_start=start_date,
                     period_end=end_date,
-                    is_active=True
+                    # is_active=True
+                    is_pair=False
                 )
                 trigger.set_metadata({
                     "led_1_lost_count": led_1_lost_count,
@@ -1896,7 +1906,8 @@ class MatchAnalysisService:
                 severity_level=severity,
                 period_start=start_date,
                 period_end=end_date,
-                is_active=True
+                # is_active=True
+                is_pair=False
             )
             trigger.set_metadata({
                 "led_2_lost_count": led_2_lost_count,
@@ -1967,7 +1978,8 @@ class MatchAnalysisService:
                     severity_level=severity,
                     period_start=start_date,
                     period_end=end_date,
-                    is_active=True
+                    # is_active=True
+                    is_pair=False
                 )
                 trigger.set_metadata({
                     "psychological_issues": psychological_issues,
@@ -2039,7 +2051,8 @@ class MatchAnalysisService:
                     severity_level=severity,
                     period_start=start_date,
                     period_end=end_date,
-                    is_active=True
+                    # is_active=True
+                    is_pair=False
                 )
                 trigger.set_metadata({
                     "comeback_opportunities": comeback_opportunities,
@@ -2120,7 +2133,8 @@ class MatchAnalysisService:
                     severity_level=severity,
                     period_start=start_date,
                     period_end=end_date,
-                    is_active=True
+                    # is_active=True
+                    is_pair=False
                 )
                 trigger.set_metadata({
                     "pressure_matches": total_pressure_matches,

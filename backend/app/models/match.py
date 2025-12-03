@@ -209,7 +209,7 @@ class PlayerTriggerBase(SQLModel):
     severity_level: int = Field(default=1)  # уровень серьезности (1-5)
     period_start: Optional[date] = None
     period_end: Optional[date] = None
-    is_active: bool = Field(default=True)
+    is_pair: bool = Field(default=True)
     trigger_metadata: Optional[str] = Field(default=None)  # JSON строка для метаданных
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

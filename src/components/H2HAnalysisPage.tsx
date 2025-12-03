@@ -14,6 +14,7 @@ interface H2HStats {
     current_rating: number;
     triggers: Array<{
       type: string;
+      trigger_value: string;
       severity: number;
     }>;
   };
@@ -23,6 +24,7 @@ interface H2HStats {
     current_rating: number;
     triggers: Array<{
       type: string;
+      trigger_value: string;
       severity: number;
     }>;
   };
@@ -321,7 +323,7 @@ const H2HAnalysisPage: React.FC = () => {
                       key={idx} 
                       className={`trigger-badge trigger-${getSeverityClass(trigger.severity)}`}
                     >
-                      {trigger.type}
+                      {trigger.trigger_value}
                     </span>
                   ))
                 ) : (
@@ -353,7 +355,7 @@ const H2HAnalysisPage: React.FC = () => {
                       key={idx} 
                       className={`trigger-badge trigger-${getSeverityClass(trigger.severity)}`}
                     >
-                      {trigger.type}
+                      {trigger.trigger_value}
                     </span>
                   ))
                 ) : (

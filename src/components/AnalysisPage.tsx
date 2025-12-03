@@ -24,7 +24,8 @@ interface Trigger {
   severity_level: number;
   period_start: string;
   period_end: string;
-  is_active: boolean;
+  // is_active: boolean;
+  is_pair: boolean;
   trigger_metadata?: any;
   created_at: string;
   ai_analysis?: string;

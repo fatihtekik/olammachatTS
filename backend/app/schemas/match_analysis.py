@@ -161,7 +161,8 @@ class TriggerResponse(BaseModel):
     severity_level: int
     period_start: Optional[date]
     period_end: Optional[date]
-    is_active: bool
+    # is_active: bool
+    is_pair: bool
     trigger_metadata: Optional[str]  # JSON строка
     created_at: datetime
     

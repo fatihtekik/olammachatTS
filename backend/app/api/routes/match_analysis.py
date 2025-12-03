@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
@@ -18,6 +19,8 @@ import io
 import logging
 from fastapi.encoders import jsonable_encoder
 from app.analysisbypairs.triggers import H2HAnalysisService
+from app.models.match import MatchSet
+
 
 logger = logging.getLogger(__name__)
 
@@ -405,7 +408,9 @@ async def get_player_triggers(
         query = db.query(PlayerTrigger).filter(PlayerTrigger.player_id == player_id)
         
         if active_only:
-            query = query.filter(PlayerTrigger.is_active == True)
+            # query = query.filter(PlayerTrigger.is_active == True)
+            query = query.filter(PlayerTrigger.is_pair == False)
+            
         
         triggers = query.order_by(PlayerTrigger.created_at.desc()).all()
         return triggers
@@ -434,7 +439,8 @@ async def get_all_triggers(
             query = query.filter(PlayerTrigger.severity_level >= severity_level)
             
         if active_only:
-            query = query.filter(PlayerTrigger.is_active == True)
+            # query = query.filter(PlayerTrigger.is_active == True)
+            query = query.filter(PlayerTrigger.is_pair == False)
         
         triggers = query.order_by(
             PlayerTrigger.severity_level.desc(),
@@ -453,14 +459,16 @@ async def get_statistics_summary(db: Session = Depends(get_db)):
     try:
         total_players = db.query(Player).count()
         total_matches = db.query(Match).count()
-        active_triggers = db.query(PlayerTrigger).filter(PlayerTrigger.is_active == True).count()
+        # active_triggers = db.query(PlayerTrigger).filter(PlayerTrigger.is_active == True).count()
+        active_triggers = db.query(PlayerTrigger.is_pair == False).count()
         
         # Топ триггеры по типам
         trigger_stats = db.query(
             PlayerTrigger.trigger_type,
             db.func.count(PlayerTrigger.id).label('count')
         ).filter(
-            PlayerTrigger.is_active == True
+            # PlayerTrigger.is_active == True
+            PlayerTrigger.is_pair == False
         ).group_by(PlayerTrigger.trigger_type).all()
         
         return {
@@ -474,27 +482,27 @@ async def get_statistics_summary(db: Session = Depends(get_db)):
         logger.error(f"Ошибка при получении статистики: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Ошибка при получении данных: {str(e)}")
 
-@router.delete("/triggers/{trigger_id}")
-async def deactivate_trigger(
-    trigger_id: str,
-    db: Session = Depends(get_db)
-):
-    """Деактивация триггера"""
-    try:
-        trigger = db.query(PlayerTrigger).filter(PlayerTrigger.id == trigger_id).first()
-        if not trigger:
-            raise HTTPException(status_code=404, detail="Триггер не найден")
+# @router.delete("/triggers/{trigger_id}")
+# async def deactivate_trigger(
+#     trigger_id: str,
+#     db: Session = Depends(get_db)
+# ):
+#     """Деактивация триггера"""
+#     try:
+#         trigger = db.query(PlayerTrigger).filter(PlayerTrigger.id == trigger_id).first()
+#         if not trigger:
+#             raise HTTPException(status_code=404, detail="Триггер не найден")
         
-        trigger.is_active = False
-        db.commit()
+#         trigger.is_active = False
+#         db.commit()
         
-        return {"message": "Триггер успешно деактивирован"}
+#         return {"message": "Триггер успешно деактивирован"}
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Ошибка при деактивации триггера: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка при обновлении данных: {str(e)}")
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Ошибка при деактивации триггера: {str(e)}")
+#         raise HTTPException(status_code=500, detail=f"Ошибка при обновлении данных: {str(e)}")
 
 @router.get("/all-matches", response_model=List[dict])
 async def get_all_matches(
@@ -747,7 +755,8 @@ async def get_triggers_enhanced(
                 'severity_level': trigger.severity_level,
                 'period_start': trigger.period_start,
                 'period_end': trigger.period_end,
-                'is_active': trigger.is_active,
+                # 'is_active': trigger.is_active,
+                'is_pair': trigger.is_pair,
                 'trigger_metadata': trigger.trigger_metadata,
                 'created_at': trigger.created_at,
                 'player_stats': player_stats,
@@ -808,7 +817,8 @@ async def get_all_triggers(
                 'severity_level': trigger.severity_level,
                 'period_start': trigger.period_start,
                 'period_end': trigger.period_end,
-                'is_active': trigger.is_active,
+                # 'is_active': trigger.is_active,
+                'is_pair': trigger.is_pair,
                 'trigger_metadata': trigger.trigger_metadata,
                 'created_at': trigger.created_at
             }
@@ -971,10 +981,10 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
         # Общее количество матчей
         total_matches = db.query(Match).count()
         
-        # Количество активных триггеров
-        active_triggers = db.query(PlayerTrigger).filter(
-            PlayerTrigger.is_active == True
-        ).count()
+        # # Количество активных триггеров
+        # active_triggers = db.query(PlayerTrigger).filter(
+        #     PlayerTrigger.is_active == True
+        # ).count()
         
         # Количество загрузок за последнюю неделю (матчи созданные за последние 7 дней)
         week_ago = datetime.now() - timedelta(days=7)
@@ -985,7 +995,7 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
         return {
             "total_players": total_players,
             "total_matches": total_matches,
-            "active_triggers": active_triggers,
+            # "active_triggers": active_triggers,
             "recent_uploads": recent_uploads
         }
         
@@ -1151,13 +1161,12 @@ async def get_h2h_analysis(
     db: Session = Depends(get_db)
 ):
     try:
-        from datetime import datetime
-        from app.models.match import MatchSet
-        from app.analysisbypairs.triggers import H2HAnalysisService
+
 
         # Загружаем игроков
         player1 = db.query(Player).filter(Player.id == player1_id).first()
         player2 = db.query(Player).filter(Player.id == player2_id).first()
+        print("Loaded players:", player1, player2)
 
         if not player1 or not player2:
             raise HTTPException(status_code=404, detail="Один или оба игрока не найдены")
@@ -1170,11 +1179,14 @@ async def get_h2h_analysis(
             )
         )
 
+
+
         target_date = None
         if match_date:
             try:
                 target_date = datetime.strptime(match_date, "%Y-%m-%d").date()
                 query = query.filter(Match.date == target_date)
+                print("Filtered by date:", target_date)
             except:
                 raise HTTPException(status_code=400, detail="Неверный формат даты")
 
@@ -1183,6 +1195,12 @@ async def get_h2h_analysis(
         # Получаем НОВЫЕ H2H триггеры
         service = H2HAnalysisService(db)
         h2h_p1, h2h_p2, _ = service.analyze_h2h(player1_id, player2_id, target_date)
+        # print("H2H triggers:", h2h_p1, h2h_p2)
+        # print("!!!!!!!!!!!!!!!!!P1 triggers JSON:!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        # print(json.dumps(jsonable_encoder(h2h_p1), indent=4, ensure_ascii=False))
+
+        # print("P2 triggers JSON:")
+        # print(json.dumps([t.to_dict() for t in h2h_p2], indent=4, ensure_ascii=False))
 
         # Если матчей нет — возвращаем пустой стандартный формат
         if not matches:
@@ -1192,7 +1210,7 @@ async def get_h2h_analysis(
                     "full_name": player1.full_name,
                     "current_rating": player1.current_rating,
                     "triggers": [
-                        {"type": t.trigger_type, "severity": t.severity_level}
+                        {"type": t.trigger_type, "trigger_value": t.trigger_value, "severity": t.severity_level}
                         for t in h2h_p1
                     ]
                 },
@@ -1201,7 +1219,7 @@ async def get_h2h_analysis(
                     "full_name": player2.full_name,
                     "current_rating": player2.current_rating,
                     "triggers": [
-                        {"type": t.trigger_type, "severity": t.severity_level}
+                        {"type": t.trigger_type, "trigger_value": t.trigger_value, "severity": t.severity_level}
                         for t in h2h_p2
                     ]
                 },
@@ -1241,6 +1259,10 @@ async def get_h2h_analysis(
                 "serve_efficiency_p2": match.serve_efficiency_p2 if is_p1_first else match.serve_efficiency_p1,
                 "receive_efficiency_p2": match.receive_efficiency_p2 if is_p1_first else match.receive_efficiency_p1,
             })
+            # print("📌 MATCHES DATA:")
+            # print(json.dumps(matches_data, indent=4, ensure_ascii=False))
+
+            
 
         # AI текст — как раньше
         player1_wins = sum(1 for m in matches if m.winner_id == player1_id)
@@ -1258,14 +1280,36 @@ async def get_h2h_analysis(
         else:
             ai_text += "Равное противостояние."
 
-        # Возвращаем в старом формате, но triggers = ТОЛЬКО новые H2H
-        return {
+        # # Возвращаем в старом формате, но triggers = ТОЛЬКО новые H2H
+        # return {
+        #     "player1": {
+        #         "id": player1.id,
+        #         "full_name": player1.full_name,
+        #         "current_rating": player1.current_rating,
+        #         "triggers": [
+        #             {"type": t.trigger_type, "severity": t.severity_level}
+        #             for t in h2h_p1
+        #         ]
+        #     },
+        #     "player2": {
+        #         "id": player2.id,
+        #         "full_name": player2.full_name,
+        #         "current_rating": player2.current_rating,
+        #         "triggers": [
+        #             {"type": t.trigger_type, "severity": t.severity_level}
+        #             for t in h2h_p2
+        #         ]
+        #     },
+        #     "matches": matches_data,
+        #     "ai_analysis": ai_text
+        # }
+        response_data = {
             "player1": {
                 "id": player1.id,
                 "full_name": player1.full_name,
                 "current_rating": player1.current_rating,
                 "triggers": [
-                    {"type": t.trigger_type, "severity": t.severity_level}
+                    {"type": t.trigger_type, "trigger_value": t.trigger_value, "severity": t.severity_level}
                     for t in h2h_p1
                 ]
             },
@@ -1274,13 +1318,44 @@ async def get_h2h_analysis(
                 "full_name": player2.full_name,
                 "current_rating": player2.current_rating,
                 "triggers": [
-                    {"type": t.trigger_type, "severity": t.severity_level}
+                    {"type": t.trigger_type, "trigger_value": t.trigger_value, "severity": t.severity_level}
                     for t in h2h_p2
                 ]
             },
             "matches": matches_data,
             "ai_analysis": ai_text
         }
+        response_data1 = {
+            "player1": {
+                "id": player1.id,
+                "full_name": player1.full_name,
+                "current_rating": player1.current_rating,
+                "triggers": [
+                    {"type": t.trigger_type, "trigger_value": t.trigger_value, "severity": t.severity_level}
+                    for t in h2h_p1
+                ]
+            },
+            "player2": {
+                "id": player2.id,
+                "full_name": player2.full_name,
+                "current_rating": player2.current_rating,
+                "triggers": [
+                    {"type": t.trigger_type, "trigger_value": t.trigger_value, "severity": t.severity_level}
+                    for t in h2h_p2
+                ]
+            },
+            "ai_analysis": ai_text
+        }
+
+        # 👍 Делаем КОПИЮ в jsonable_encoder — оригинал не трогаем!
+        encoded = jsonable_encoder(response_data1)
+
+        print("📌 FINAL RESPONSE JSON:")
+        print(json.dumps(encoded, indent=4, ensure_ascii=False))
+
+        # ❗ Возвращаем ровно то, что ждет фронт
+        return response_data
+    
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
