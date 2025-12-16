@@ -21,7 +21,6 @@ from fastapi.encoders import jsonable_encoder
 from app.analysisbypairs.triggers import H2HAnalysisService
 from app.models.match import MatchSet
 
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/match-analysis", tags=["Match Analysis"])
@@ -278,6 +277,8 @@ async def upload_excel_file(
                     баланс_в_4_сете=safe_get(row, 'Баланс в 4 сете'),
                     баланс_в_5_сете=safe_get(row, 'Баланс в 5 сете')
                 )
+                d = row.get('Дата')
+                print("DEBUG Дата:", d, type(d))
                 
                 # DEBUG: Логируем первые 2 матча для проверки сетов
                 if idx < 2:
@@ -1485,3 +1486,121 @@ async def get_h2h_by_date(
         logger.error(f"Ошибка анализа по дате: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Ошибка анализа: {str(e)}")
 
+@router.get("/h2h/{player1_id}/{player2_id}/{trigger_type}")
+async def get_h2h_trigger_details(
+    player1_id: str,
+    player2_id: str,
+    trigger_type: str,
+    db: Session = Depends(get_db)
+):
+    try:
+
+
+        # ─────────────────────────────
+        # 1. Проверяем игроков
+        # ─────────────────────────────
+        player1 = db.query(Player).filter(Player.id == player1_id).first()
+        player2 = db.query(Player).filter(Player.id == player2_id).first()
+
+        if not player1 or not player2:
+            raise HTTPException(status_code=404, detail="Игрок не найден")
+
+        # ─────────────────────────────
+        # 2. Достаём триггер
+        # ─────────────────────────────
+        trigger = db.query(PlayerTrigger).filter(
+            PlayerTrigger.player_id == player1_id,
+            PlayerTrigger.trigger_type == trigger_type
+        ).first()
+
+        if not trigger:
+            raise HTTPException(status_code=404, detail="Триггер не найден")
+
+        # ─────────────────────────────
+        # 3. Парсим trigger_metadata
+        # ─────────────────────────────
+        metadata = trigger.trigger_metadata
+
+        while isinstance(metadata, str):
+            metadata = json.loads(metadata)
+
+
+        if metadata.get("opponent_id") != player2_id:
+            raise HTTPException(status_code=404, detail="Триггер не относится к этому сопернику")
+
+        match_ids = metadata.get("match_ids", [])
+        if not match_ids:
+            return {
+                "ai_analysis": "Недостаточно данных для анализа",
+                "trigger": {
+                    "trigger_type": trigger.trigger_type,
+                    "trigger_subtype": trigger.trigger_subtype,
+                    "trigger_value": trigger.trigger_value,
+                    "severity_level": trigger.severity_level
+                },
+                "matches": []
+            }
+
+        # ─────────────────────────────
+        # 4. Загружаем матчи
+        # ─────────────────────────────
+        matches = db.query(Match).filter(
+            Match.id.in_(match_ids)
+        ).order_by(Match.date.desc()).all()
+
+        matches_data = []
+
+        for match in matches:
+            sets = db.query(MatchSet).filter(
+                MatchSet.match_id == match.id
+            ).order_by(MatchSet.set_number).all()
+
+            is_p1_first = match.player1_id == player1_id
+
+            sets_block = [
+                {
+                    "set_number": s.set_number,
+                    "player1_points": s.player1_points if is_p1_first else s.player2_points,
+                    "player2_points": s.player2_points if is_p1_first else s.player1_points
+                }
+                for s in sets
+            ]
+
+            matches_data.append({
+                "id": match.id,
+                "date": match.date.isoformat() if match.date else None,
+                "score": match.score,
+                "winner_id": match.winner_id,
+
+                "rating1": player1.current_rating,
+                "rating2": player2.current_rating,
+
+                "league1": match.league_id,
+                "league2": match.league_id,
+
+                "sets": sets_block
+            })
+
+
+        # ─────────────────────────────
+        # 5. Ответ
+        # ─────────────────────────────
+        return {
+            "ai_analysis": (
+                f"Анализ противостояния {player1.full_name} против "
+                f"{player2.full_name} по триггеру '{trigger_type}'. "
+                "ИИ-анализ будет добавлен позже."
+            ),
+            "trigger": {
+                "trigger_type": trigger.trigger_type,
+                "trigger_subtype": trigger.trigger_subtype,
+                "trigger_value": trigger.trigger_value,
+                "severity_level": trigger.severity_level
+            },
+            "matches": matches_data
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

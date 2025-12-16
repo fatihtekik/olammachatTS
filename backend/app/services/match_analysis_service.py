@@ -77,7 +77,7 @@ class MatchAnalysisService:
             "pressure_situations": self._analyze_pressure_situations
         }
     
-    async def process_excel_data(self, excel_data: List[ExcelMatchData]) -> Dict[str, Any]:
+    async def process_excel_data(self, excel_data: List[ExcelMatchData]) -> Dict[str, Any]: #РАБОТАЕТ
         """Обрабатывает данные из Excel файла"""
         try:
             created_players = 0
@@ -174,7 +174,7 @@ class MatchAnalysisService:
             print(f"💥 Ошибка при обработке Excel данных: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    async def _get_or_create_player(self, player_name: str, rating_str: Optional[str] = None) -> tuple[Player, bool]:
+    async def _get_or_create_player(self, player_name: str, rating_str: Optional[str] = None) -> tuple[Player, bool]: #РАБОТАЕТ
         """Получает существующего игрока или создает нового с рейтингом"""
         # Извлекаем рейтинг из отдельного поля или из имени игрока
         rating = 1000  # значение по умолчанию
@@ -1449,39 +1449,41 @@ class MatchAnalysisService:
         triggers = []
         return triggers
     
-    def _parse_date(self, date_str: str) -> date:
-        """Парсит дату из различных форматов"""
+    def _parse_date(self, date_str) -> date:
         date_formats = [
-            "%Y-%m-%d",      # 2025-05-04
-            "%d.%m.%Y",      # 04.05.2025
-            "%d/%m/%Y",      # 04/05/2025
-            "%d-%m-%Y",      # 04-05-2025
-            "%Y.%m.%d",      # 2025.05.04
-            "%Y/%m/%d",      # 2025/05/04
+            "%Y-%m-%d",
+            "%Y-%m-%d %H:%M:%S",
+            "%d.%m.%Y",
+            "%d/%m/%Y",
+            "%d-%m-%Y",
+            "%Y.%m.%d",
+            "%Y/%m/%d",
         ]
-        
-        # Удаляем лишние пробелы
+
         date_str = str(date_str).strip()
-        
+        print(f"   🔍  Парсим дату: '{date_str}'")
+        last_error = None
+
         for fmt in date_formats:
             try:
                 return datetime.strptime(date_str, fmt).date()
-            except ValueError:
-                continue
-        
-        # Если ни один формат не подошел, пытаемся обработать как числовой формат Excel
+            except ValueError as error:
+                last_error = error
+
         try:
-            # Excel может возвращать дату как число дней с 1900-01-01
             if date_str.replace('.', '').isdigit():
                 excel_date = float(date_str)
-                # Excel считает 1900-01-01 как день 1, но на самом деле это 1899-12-30
                 base_date = datetime(1899, 12, 30)
                 return (base_date + timedelta(days=excel_date)).date()
-        except:
-            pass
+        except Exception as error:
+            last_error = error
+
+        raise ValueError(
+            f"Не удалось распарсить дату: '{date_str}'. "
+            f"Причина: {last_error}"
+        )
+
         
-        raise ValueError(f"Не удалось распарсить дату: {date_str}")
-    
     def _parse_score(self, score_str: str) -> tuple[int, int]:
         """Парсит счёт матча из различных форматов"""
         # Убираем лишние пробелы

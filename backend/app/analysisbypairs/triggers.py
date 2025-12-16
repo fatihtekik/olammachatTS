@@ -1,6 +1,8 @@
+from collections import Counter, defaultdict
 from datetime import date
 import json
 import traceback
+from app.analysisbypairs.dop_functions import build_trigger_metadata, calculate_severity_level, get_season
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
@@ -12,72 +14,6 @@ engine = create_engine(
 )
 
 
-def calculate_severity_level(player: Player, opponent: Player, matches: list[Match], trigger_type: str, relevant_matches: list[Match]) -> int:
-    """
-    Универсальный расчет severity_level для триггеров.
-    
-    player: игрок, для которого считается триггер
-    opponent: оппонент игрока
-    matches: все очные матчи между player и opponent
-    trigger_type: тип триггера (h2h_losing_streak, h2h_close_score_losses, h2h_score_pattern)
-    relevant_matches: матчи, на которых основан текущий триггер (например, серия поражений)
-    """
-    if not relevant_matches:
-        return 1
-
-    # 1️⃣ Частота события
-    total_matches = len(matches)
-    trigger_matches = len(relevant_matches)
-    frequency_ratio = trigger_matches / total_matches if total_matches else 0
-
-    # 2️⃣ Серьёзность события по типу триггера
-    type_factor = {
-        "h2h_losing_streak": 1.5,        # серия поражений считается более серьёзной
-        "h2h_close_score_losses": 1.0,   # близкие поражения средней серьёзности
-        "h2h_score_pattern": 1.2,        # часто повторяющийся счет
-    }.get(trigger_type, 1.0)
-
-    # 3️⃣ Важность матчей (если есть поле is_final, is_deciding_set и т.п.)
-    importance_factor = 1.0
-    for m in relevant_matches:
-        if getattr(m, "is_final", False):
-            importance_factor += 0.3
-        if getattr(m, "is_deciding_set", False):
-            importance_factor += 0.2
-
-    # 4️⃣ Итоговый расчет severity
-    raw_severity = frequency_ratio * type_factor * importance_factor * 5  # шкала 1–5
-    severity = max(1, min(5, round(raw_severity)))  # ограничиваем от 1 до 5
-
-    return severity
-
-
-def build_trigger_metadata(opponent=None, matches=None, pattern=None, **extra):
-    """
-    Универсальная сборка metadata для триггеров.
-    Возвращает строку JSON с нормальной кодировкой.
-    """
-
-    meta = {}
-
-    # Информация об оппоненте
-    if opponent:
-        meta["opponent_id"] = str(opponent.id)
-
-    # Список матчей (их id)
-    if matches:
-        meta["match_ids"] = [str(m.id) for m in matches]
-
-    # Паттерн/счёт
-    if pattern:
-        meta["pattern"] = pattern
-
-    # Дополнительные значения
-    if extra:
-        meta.update(extra)
-
-    # Возвращаем JSON-строку без escape последовательностей
-    return json.dumps(meta, ensure_ascii=False)
 
 
 class H2HAnalysisService:
@@ -567,6 +503,249 @@ class H2HAnalysisService:
 
         self.db.add(trig)
         return [trig]
+    
+    
+    
+    def _trigger_h2h_seasonal_pattern(self, player, matches, opponent):
+        """
+        Сезонная стабильность по годам (ТОЛЬКО player vs opponent)
+        """
+
+        # 1️⃣ Только очные матчи
+        h2h_matches = [
+            m for m in matches
+            if (m.player1_id == player.id and m.player2_id == opponent.id)
+            or (m.player1_id == opponent.id and m.player2_id == player.id)
+        ]
+
+        if not h2h_matches:
+            return []
+
+        # 2️⃣ Группировка по годам → сезонам
+        yearly = defaultdict(lambda: defaultdict(list))
+
+        for m in h2h_matches:
+            year = m.date.year
+            season = get_season(m.date)
+            yearly[year][season].append(m)
+
+        if len(yearly) < 2:
+            return []  # важно: минимум 3 года
+
+        best_seasons = []
+        worst_seasons = []
+        season_match_map = defaultdict(list)
+
+        # 3️⃣ Анализ каждого года
+        for year, seasons in yearly.items():
+            season_stats = {}
+
+            for season, season_matches in seasons.items():
+                if len(season_matches) < 2:
+                    continue
+
+                wins = sum(1 for m in season_matches if m.winner_id == player.id)
+                total = len(season_matches)
+                winrate = wins / total
+
+                season_stats[season] = {
+                    "wins": wins,
+                    "total": total,
+                    "winrate": winrate
+                }
+
+                season_match_map[season].extend(season_matches)
+
+            if not season_stats:
+                continue
+
+            best = max(season_stats.items(), key=lambda x: x[1]["winrate"])[0]
+            worst = min(season_stats.items(), key=lambda x: x[1]["winrate"])[0]
+
+            best_seasons.append(best)
+            worst_seasons.append(worst)
+
+        if len(best_seasons) < 3:
+            return []
+
+        triggers = []
+
+        # 4️⃣ Проверка паттернов
+        best_counter = Counter(best_seasons)
+        worst_counter = Counter(worst_seasons)
+
+        years_count = len(best_seasons)
+
+        def make_trigger(season, count, label):
+            used_matches = season_match_map[season]
+
+            trig = PlayerTrigger(
+                player_id=player.id,
+                trigger_type="h2h_seasonal_pattern",
+                trigger_subtype=f"Противник: {opponent.full_name}",
+                trigger_value=(
+                    f"{label}: {season} "
+                    f"(повторяется в {count} из {years_count} лет)"
+                ),
+                period_start=min(m.date for m in used_matches),
+                period_end=max(m.date for m in used_matches),
+                is_pair=True
+            )
+
+            sev = calculate_severity_level(
+                player,
+                opponent,
+                h2h_matches,
+                "h2h_seasonal_pattern",
+                used_matches
+            )
+            trig.severity_level = sev
+
+            trig.set_metadata(
+                build_trigger_metadata(
+                    opponent=opponent,
+                    matches=used_matches,
+                    pattern=season,
+                    years_with_pattern=count,
+                    total_years=years_count
+                )
+            )
+
+            self.db.add(trig)
+            triggers.append(trig)
+
+        # Лучший сезон
+        season, count = best_counter.most_common(1)[0]
+        if count / years_count >= 0.6:
+            make_trigger(season, count, "Лучший сезон")
+
+        # Худший сезон
+        season, count = worst_counter.most_common(1)[0]
+        if count / years_count >= 0.6:
+            make_trigger(season, count, "Худший сезон")
+
+        return triggers
+    
+    def _trigger_h2h_deciding_set_behavior(self, player, matches, opponent):
+        """
+        Поведение игрока при счёте 1–1:
+        - берет ли он третий сет
+        - или часто ломается
+        """
+
+        # 1️⃣ Только очные матчи
+        h2h_matches = [
+            m for m in matches
+            if (m.player1_id == player.id and m.player2_id == opponent.id)
+            or (m.player1_id == opponent.id and m.player2_id == player.id)
+        ]
+
+        if not h2h_matches:
+            return []
+
+        deciding_matches = []
+        wins_third = []
+        losses_third = []
+
+        for m in h2h_matches:
+
+            # 2️⃣ Берём все сеты матча
+            sets = (
+                self.db.query(MatchSet)
+                .filter(MatchSet.match_id == m.id)
+                .order_by(MatchSet.set_number)
+                .all()
+            )
+
+            if len(sets) < 3:
+                continue  # матч не дошёл до 3 сетов
+
+            # 3️⃣ Определяем победителей первых двух сетов
+            first_two_winners = []
+
+            for s in sets[:2]:
+                if s.player1_points > s.player2_points:
+                    winner = m.player1_id
+                else:
+                    winner = m.player2_id
+                first_two_winners.append(winner)
+
+            # должно быть 1–1
+            if first_two_winners.count(player.id) != 1:
+                continue
+
+            # 4️⃣ Победитель третьего сета
+            third_set = sets[2]
+
+            if third_set.player1_points > third_set.player2_points:
+                third_winner = m.player1_id
+            else:
+                third_winner = m.player2_id
+
+            deciding_matches.append(m)
+
+            if third_winner == player.id:
+                wins_third.append(m)
+            else:
+                losses_third.append(m)
+
+        total = len(deciding_matches)
+
+        if total < 3:
+            return []  # слишком мало данных
+
+        win_pct = len(wins_third) / total
+        loss_pct = len(losses_third) / total
+
+        # 5️⃣ Проверка паттерна
+        if win_pct >= 0.7:
+            label = "Часто берёт решающий сет"
+            used_matches = wins_third
+            pattern_value = f"{len(wins_third)}/{total}"
+
+        elif loss_pct >= 0.7:
+            label = "Часто ломается при 1–1"
+            used_matches = losses_third
+            pattern_value = f"{len(losses_third)}/{total}"
+
+        else:
+            return []
+
+        # 6️⃣ Создание триггера
+        trig = PlayerTrigger(
+            player_id=player.id,
+            trigger_type="h2h_deciding_set_behavior",
+            trigger_subtype=f"Противник: {opponent.full_name}",
+            trigger_value=f"{label} — {pattern_value}",
+            period_start=min(m.date for m in deciding_matches),
+            period_end=max(m.date for m in deciding_matches),
+            is_pair=True
+        )
+
+        sev = calculate_severity_level(
+            player,
+            opponent,
+            h2h_matches,
+            "h2h_deciding_set_behavior",
+            used_matches
+        )
+        trig.severity_level = sev
+
+        trig.set_metadata(
+            build_trigger_metadata(
+                opponent=opponent,
+                matches=used_matches,
+                pattern="1-1_deciding_set",
+                wins=len(wins_third),
+                losses=len(losses_third),
+                total=total
+            )
+        )
+
+        self.db.add(trig)
+        return [trig]
+
+
 
 
 
@@ -583,7 +762,8 @@ class H2HAnalysisService:
 
             # очищаем старые триггеры H2H
             self.db.query(PlayerTrigger).filter(
-                PlayerTrigger.trigger_type.in_(["h2h_losing_streak", "h2h_close_score_losses", "h2h_score_pattern"]),
+                PlayerTrigger.trigger_type.in_(["h2h_losing_streak", "h2h_close_score_losses", "h2h_score_pattern", "h2h_deciding_set_behavior", "h2h_set_anomalies", "h2h_first_set_win", "h2h_seasonal_pattern"
+]),
                 PlayerTrigger.player_id.in_([player1.id, player2.id])
             ).delete(synchronize_session=False)
 
@@ -595,12 +775,19 @@ class H2HAnalysisService:
             trig_p1 += self._trigger_h2h_score_patterns(player1, matches, player2)
             trig_p1 += self._trigger_h2h_set_anomalies(player1, matches, player2)
             trig_p1 += self._trigger_h2h_first_set_win_effect(player1, matches, player2)
+            trig_p1 += self._trigger_h2h_seasonal_pattern(player1, matches, player2)
+            trig_p1 += self._trigger_h2h_deciding_set_behavior(player1, matches, player2)
+
+
+
 
             trig_p2 += self._trigger_h2h_losing_streak(player2, matches, player1)
             trig_p2 += self._trigger_h2h_close_score_losses(player2, matches, player1)
             trig_p2 += self._trigger_h2h_score_patterns(player2, matches, player1)
             trig_p2 += self._trigger_h2h_set_anomalies(player2, matches, player1)
             trig_p2 += self._trigger_h2h_first_set_win_effect(player2, matches, player1)
+            trig_p2 += self._trigger_h2h_seasonal_pattern(player2, matches, player1)
+            trig_p2 += self._trigger_h2h_deciding_set_behavior(player2, matches, player1)
 
             self.db.commit()
 
