@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './H2HAnalysisPage.css';
+import H2HTriggerModal from './H2HTriggerModal';
 
 interface Player {
   id: string;
@@ -109,6 +110,16 @@ const H2HAnalysisPage: React.FC = () => {
   const [selectedMatch, setSelectedMatch] = useState<any>(null);
   const [showModal, setShowModal] = useState(false);
   const [modalPlayers, setModalPlayers] = useState<{player1: any, player2: any} | null>(null);
+  const [selectedTrigger, setSelectedTrigger] = useState<{
+    player1Id: string;
+    player2Id: string;
+    player1Name: string;
+    player2Name: string;
+    triggerType: string;
+    triggerValue: string;
+    severity: number;
+  } | null>(null);
+  const [showTriggerModal, setShowTriggerModal] = useState(false);
 
   useEffect(() => {
     fetchPlayers();
@@ -216,6 +227,32 @@ const H2HAnalysisPage: React.FC = () => {
     setModalPlayers(null);
   };
 
+  const openTriggerModal = (
+    player1Id: string,
+    player2Id: string,
+    player1Name: string,
+    player2Name: string,
+    triggerType: string,
+    triggerValue: string,
+    severity: number
+  ) => {
+    setSelectedTrigger({
+      player1Id,
+      player2Id,
+      player1Name,
+      player2Name,
+      triggerType,
+      triggerValue,
+      severity,
+    });
+    setShowTriggerModal(true);
+  };
+
+  const closeTriggerModal = () => {
+    setShowTriggerModal(false);
+    setSelectedTrigger(null);
+  };
+
   return (
     <div className="h2h-analysis-page">
       <div className="page-header">
@@ -321,7 +358,16 @@ const H2HAnalysisPage: React.FC = () => {
                   h2hStats.player1.triggers.map((trigger, idx) => (
                     <span 
                       key={idx} 
-                      className={`trigger-badge trigger-${getSeverityClass(trigger.severity)}`}
+                      className={`trigger-badge trigger-${getSeverityClass(trigger.severity)} clickable`}
+                      onClick={() => openTriggerModal(
+                        h2hStats.player1.id,
+                        h2hStats.player2.id,
+                        h2hStats.player1.full_name,
+                        h2hStats.player2.full_name,
+                        trigger.type,
+                        trigger.trigger_value,
+                        trigger.severity
+                      )}
                     >
                       {trigger.trigger_value}
                     </span>
@@ -353,7 +399,16 @@ const H2HAnalysisPage: React.FC = () => {
                   h2hStats.player2.triggers.map((trigger, idx) => (
                     <span 
                       key={idx} 
-                      className={`trigger-badge trigger-${getSeverityClass(trigger.severity)}`}
+                      className={`trigger-badge trigger-${getSeverityClass(trigger.severity)} clickable`}
+                      onClick={() => openTriggerModal(
+                        h2hStats.player2.id,
+                        h2hStats.player1.id,
+                        h2hStats.player2.full_name,
+                        h2hStats.player1.full_name,
+                        trigger.type,
+                        trigger.trigger_value,
+                        trigger.severity
+                      )}
                     >
                       {trigger.trigger_value}
                     </span>
@@ -630,6 +685,20 @@ const H2HAnalysisPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Модальное окно деталей триггера H2H */}
+      {showTriggerModal && selectedTrigger && (
+        <H2HTriggerModal
+          player1Id={selectedTrigger.player1Id}
+          player2Id={selectedTrigger.player2Id}
+          player1Name={selectedTrigger.player1Name}
+          player2Name={selectedTrigger.player2Name}
+          triggerType={selectedTrigger.triggerType}
+          triggerValue={selectedTrigger.triggerValue}
+          severity={selectedTrigger.severity}
+          onClose={closeTriggerModal}
+        />
       )}
     </div>
   );

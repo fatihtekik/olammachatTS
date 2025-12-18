@@ -58,10 +58,23 @@
   border-radius: 12px;
   border: 1px solid var(--border-primary);
   margin-bottom: 30px;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr 1fr auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 20px;
-  align-items: end;
+  align-items: flex-end;
+}
+
+.h2h-selection .player-selector {
+  flex: 1;
+  min-width: 200px;
+}
+
+.h2h-selection .vs-divider {
+  flex-shrink: 0;
+}
+
+.h2h-selection .analyze-btn {
+  flex-shrink: 0;
 }
 
 .player-selector {
@@ -100,7 +113,8 @@
   font-size: 1.5rem;
   display: flex;
   align-items: center;
-  margin-bottom: 10px;
+  padding-bottom: 10px;
+  flex-shrink: 0;
 }
 
 .analyze-btn {
@@ -115,7 +129,8 @@
   transition: all 0.2s ease;
   box-shadow: 0 4px 12px rgba(255, 107, 0, 0.3);
   height: fit-content;
-  margin-bottom: 10px;
+  white-space: nowrap;
+  align-self: flex-end;
 }
 
 .analyze-btn:hover {
@@ -173,14 +188,14 @@
 
 .player-name {
   font-size: 20px;
-  color: var(--text-primary);
+  color: #ffffff;
   font-weight: 700;
   margin: 0;
 }
 
 .player-rating {
   font-size: 16px;
-  color: var(--orange-primary);
+  color: #ff6b35;
   font-weight: 600;
   margin: 0;
 }
@@ -771,31 +786,64 @@
 }
 
 .trigger-badge {
-  padding: 6px 12px;
+  margin: 4px 0;
+  padding: 8px 16px;
   font-size: 13px;
   font-weight: 500;
-  border-radius: 6px;
+  border-radius: 20px;
   display: inline-block;
   text-align: left;
+  transition: all 0.2s ease;
+  background: transparent;
 }
 
+.trigger-badge.clickable {
+  cursor: pointer;
+}
+
+.trigger-badge.clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  filter: brightness(1.1);
+}
+
+/* Стили с рамкой без фона */
+.trigger-high {
+  background: transparent;
+  color: #ff4444;
+  border: 2px solid #ff4444;
+}
+
+.trigger-medium {
+  background: transparent;
+  color: #ffc107;
+  border: 2px solid #ffc107;
+}
+
+.trigger-low {
+  background: transparent;
+  color: #4caf50;
+  border: 2px solid #4caf50;
+}
+
+/* Старые классы для совместимости */
 .trigger-критическая,
 .trigger-высокая {
-  background: rgba(255, 68, 68, 0.15);
+  background: transparent;
   color: #ff4444;
-  border: 1px solid rgba(255, 68, 68, 0.3);
+  border: 2px solid #ff4444;
 }
 
 .trigger-средняя {
-  background: rgba(255, 193, 7, 0.15);
+  background: transparent;
   color: #ffc107;
-  border: 1px solid rgba(255, 193, 7, 0.3);
+  border: 2px solid #ffc107;
 }
 
 .trigger-низкая {
-  background: rgba(76, 175, 80, 0.15);
+  background: transparent;
   color: #4caf50;
-  border: 1px solid rgba(76, 175, 80, 0.3);
+  border: 2px solid #4caf50;
 }
 
 .no-triggers {

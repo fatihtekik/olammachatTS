@@ -1566,11 +1566,21 @@ async def get_h2h_trigger_details(
                 for s in sets
             ]
 
+            # Корректируем score если порядок игроков в матче отличается от запроса
+            original_score = match.score
+            if not is_p1_first and ":" in original_score:
+                parts = original_score.split(":")
+                corrected_score = f"{parts[1]}:{parts[0]}"
+            else:
+                corrected_score = original_score
+
             matches_data.append({
                 "id": match.id,
                 "date": match.date.isoformat() if match.date else None,
-                "score": match.score,
+                "score": corrected_score,
                 "winner_id": match.winner_id,
+                "player1_id": player1_id,
+                "player2_id": player2_id,
 
                 "rating1": player1.current_rating,
                 "rating2": player2.current_rating,
