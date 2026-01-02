@@ -57,46 +57,54 @@ class H2HAnalysisService:
 
 
         # 3. Подсчёт поражений подряд
-        streak = 0
-        max_streak = 0
+        current_streak = []
+        best_streak = []
 
         for match in h2h_matches:
             if match.winner_id != player.id:
-                streak += 1
-                max_streak = max(max_streak, streak)
+                current_streak.append(match)
+
+                if len(current_streak) > len(best_streak):
+                    best_streak = current_streak.copy()
             else:
-                streak = 0  # сброс, потому что победил
+                current_streak = []
+
+        max_streak = len(best_streak)
+
 
         # 4. Если серия ≥ 3 — создаём триггер
         if max_streak >= 3:
             trig = PlayerTrigger(
                 player_id=player.id,
-                match_id=h2h_matches[-1].id,   # последний матч серии
+                match_id=best_streak[-1].id,  # последний матч серии
                 trigger_type="h2h_losing_streak",
                 trigger_subtype=f"Противник: {opponent.full_name}",
                 trigger_value=f"Серия поражений: {max_streak} подряд",
-                # severity_level=2,
-                period_start=h2h_matches[0].date,
-                period_end=h2h_matches[-1].date,
-
+                period_start=best_streak[0].date,
+                period_end=best_streak[-1].date,
                 is_pair=True
             )
-            sev = calculate_severity_level(player, opponent, h2h_matches, "h2h_losing_streak", h2h_matches[-max_streak:])
+
+            sev = calculate_severity_level(
+                player,
+                opponent,
+                h2h_matches,
+                "h2h_losing_streak",
+                best_streak
+            )
             trig.severity_level = sev
 
-
-            # Данные в JSON через метод
             trig.set_metadata(
                 build_trigger_metadata(
                     opponent=opponent,
-                    matches=h2h_matches[-max_streak:],
+                    matches=best_streak,   # 🔥 ВОТ ТУТ ТЕПЕРЬ ВСЁ ПРАВИЛЬНО
                     pattern=max_streak
                 )
             )
 
             self.db.add(trig)
-
             return [trig]
+
 
         return []
 
@@ -644,8 +652,13 @@ class H2HAnalysisService:
             return []
 
         deciding_matches = []
-        wins_third = []
-        losses_third = []
+        cases = {
+            "lose3_win_match": [],
+            "lose3_lose_match": [],
+            "win3_win_match": [],
+            "win3_lose_match": []
+        }
+
 
         for m in h2h_matches:
 
@@ -684,39 +697,57 @@ class H2HAnalysisService:
 
             deciding_matches.append(m)
 
-            if third_winner == player.id:
-                wins_third.append(m)
+            won_third = (third_winner == player.id)
+            won_match = (m.winner_id == player.id)
+
+            if not won_third and won_match:
+                cases["lose3_win_match"].append(m)
+
+            elif not won_third and not won_match:
+                cases["lose3_lose_match"].append(m)
+
+            elif won_third and won_match:
+                cases["win3_win_match"].append(m)
+
             else:
-                losses_third.append(m)
+                cases["win3_lose_match"].append(m)
 
         total = len(deciding_matches)
 
         if total < 3:
             return []  # слишком мало данных
+        
+        THRESHOLD = 0.7
 
-        win_pct = len(wins_third) / total
-        loss_pct = len(losses_third) / total
+        stats = {
+            key: len(matches) / total
+            for key, matches in cases.items()
+        }
 
-        # 5️⃣ Проверка паттерна
-        if win_pct >= 0.7:
-            label = "Часто берёт решающий сет"
-            used_matches = wins_third
-            pattern_value = f"{len(wins_third)}/{total}"
+        dominant_case = None
 
-        elif loss_pct >= 0.7:
-            label = "Часто ломается при 1–1"
-            used_matches = losses_third
-            pattern_value = f"{len(losses_third)}/{total}"
+        for key, pct in stats.items():
+            if pct >= THRESHOLD:
+                dominant_case = key
+                break
 
-        else:
+        if not dominant_case:
             return []
+        
+        LABELS = {
+            "lose3_win_match": "Проигрывает 3-й сет при 1–1, но чаще всего выигрывает матч",
+            "lose3_lose_match": "Проигрывает 3-й сет при 1–1 и чаще всего проигрывает матч",
+            "win3_win_match": "Берёт 3-й сет при 1–1 и чаще всего выигрывает матч",
+            "win3_lose_match": "Берёт 3-й сет при 1–1, но чаще всего проигрывает матч"
+        }
+        used_matches = cases[dominant_case]
 
         # 6️⃣ Создание триггера
         trig = PlayerTrigger(
             player_id=player.id,
             trigger_type="h2h_deciding_set_behavior",
             trigger_subtype=f"Противник: {opponent.full_name}",
-            trigger_value=f"{label} — {pattern_value}",
+            trigger_value=f"{LABELS[dominant_case]} — {len(used_matches)}/{total}",
             period_start=min(m.date for m in deciding_matches),
             period_end=max(m.date for m in deciding_matches),
             is_pair=True
@@ -736,14 +767,140 @@ class H2HAnalysisService:
                 opponent=opponent,
                 matches=used_matches,
                 pattern="1-1_deciding_set",
-                wins=len(wins_third),
-                losses=len(losses_third),
                 total=total
             )
         )
 
         self.db.add(trig)
         return [trig]
+    
+
+    def _trigger_h2h_lead_2_0_behavior(self, player, matches, opponent):
+        """
+        Поведение игрока при счёте 2–0:
+        - дожимает 3:0
+        - дожимает 3:1
+        - или сливает 2:3
+        """
+
+        # 1️⃣ Только очные матчи
+        h2h_matches = [
+            m for m in matches
+            if (m.player1_id == player.id and m.player2_id == opponent.id)
+            or (m.player1_id == opponent.id and m.player2_id == player.id)
+        ]
+
+        if not h2h_matches:
+            return []
+
+        cases = {
+            "win_3_0": [],
+            "win_3_1": [],
+            "lose_2_3": []
+        }
+
+        relevant_matches = []
+
+        for m in h2h_matches:
+            # 2️⃣ Получаем сеты матча
+            sets = (
+                self.db.query(MatchSet)
+                .filter(MatchSet.match_id == m.id)
+                .order_by(MatchSet.set_number)
+                .all()
+            )
+
+            if len(sets) < 3:
+                continue  # матч не BO5
+
+            # 3️⃣ Определяем победителей первых двух сетов
+            first_two_winners = []
+
+            for s in sets[:2]:
+                if s.player1_points > s.player2_points:
+                    winner = m.player1_id
+                else:
+                    winner = m.player2_id
+                first_two_winners.append(winner)
+
+            # игрок должен вести 2–0
+            if first_two_winners.count(player.id) != 2:
+                continue
+
+            relevant_matches.append(m)
+
+            # 4️⃣ Финальный счёт матча
+            p_sets = m.sets_player1 if m.player1_id == player.id else m.sets_player2
+            o_sets = m.sets_player2 if m.player1_id == player.id else m.sets_player1
+
+            if p_sets == 3 and o_sets == 0:
+                cases["win_3_0"].append(m)
+
+            elif p_sets == 3 and o_sets == 1:
+                cases["win_3_1"].append(m)
+
+            elif p_sets == 2 and o_sets == 3:
+                cases["lose_2_3"].append(m)
+
+        total = len(relevant_matches)
+
+        if total < 3:
+            return []  # мало данных
+
+        # 5️⃣ Анализ доминирующего сценария
+        THRESHOLD = 0.6
+
+        dominant_case = None
+        dominant_matches = []
+
+        for key, ms in cases.items():
+            if len(ms) / total >= THRESHOLD:
+                dominant_case = key
+                dominant_matches = ms
+                break
+
+        if not dominant_case:
+            return []
+
+        # 6️⃣ Человекочитаемый текст
+        LABELS = {
+            "win_3_0": "При счёте 2–0 чаще всего выигрывает матч 3:0",
+            "win_3_1": "При счёте 2–0 чаще всего доводит матч до 3:1",
+            "lose_2_3": "Ведя 2–0, часто упускает матч (2:3)"
+        }
+
+        trig = PlayerTrigger(
+            player_id=player.id,
+            trigger_type="h2h_lead_2_0_behavior",
+            trigger_subtype=f"Противник: {opponent.full_name}",
+            trigger_value=f"{LABELS[dominant_case]} — {len(dominant_matches)}/{total}",
+            period_start=min(m.date for m in relevant_matches),
+            period_end=max(m.date for m in relevant_matches),
+            is_pair=True
+        )
+
+        sev = calculate_severity_level(
+            player,
+            opponent,
+            relevant_matches,
+            "h2h_lead_2_0_behavior",
+            dominant_matches
+        )
+        trig.severity_level = sev
+
+        trig.set_metadata(
+            build_trigger_metadata(
+                opponent=opponent,
+                matches=dominant_matches,
+                pattern=dominant_case,
+                breakdown={k: len(v) for k, v in cases.items()},
+                total=total
+            )
+        )
+
+        self.db.add(trig)
+        return [trig]
+
 
 
 
@@ -762,7 +919,7 @@ class H2HAnalysisService:
 
             # очищаем старые триггеры H2H
             self.db.query(PlayerTrigger).filter(
-                PlayerTrigger.trigger_type.in_(["h2h_losing_streak", "h2h_close_score_losses", "h2h_score_pattern", "h2h_deciding_set_behavior", "h2h_set_anomalies", "h2h_first_set_win", "h2h_seasonal_pattern"
+                PlayerTrigger.trigger_type.in_(["h2h_losing_streak", "h2h_close_score_losses", "h2h_score_pattern", "h2h_deciding_set_behavior", "h2h_set_anomalies", "h2h_first_set_win", "h2h_seasonal_pattern", "h2h_lead_2_0_behavior"
 ]),
                 PlayerTrigger.player_id.in_([player1.id, player2.id])
             ).delete(synchronize_session=False)
@@ -773,10 +930,11 @@ class H2HAnalysisService:
             trig_p1 += self._trigger_h2h_losing_streak(player1, matches, player2)
             trig_p1 += self._trigger_h2h_close_score_losses(player1, matches, player2)
             trig_p1 += self._trigger_h2h_score_patterns(player1, matches, player2)
-            trig_p1 += self._trigger_h2h_set_anomalies(player1, matches, player2)
+            trig_p1 += self._trigger_h2h_set_anomalies(player1, matches, player2) #???  не могу провеить, нет матчей с такими аномалиями
             trig_p1 += self._trigger_h2h_first_set_win_effect(player1, matches, player2)
-            trig_p1 += self._trigger_h2h_seasonal_pattern(player1, matches, player2)
+            trig_p1 += self._trigger_h2h_seasonal_pattern(player1, matches, player2) #??? не могу провеить, недостаточно матчей с разными сезонами
             trig_p1 += self._trigger_h2h_deciding_set_behavior(player1, matches, player2)
+            trig_p1 += self._trigger_h2h_lead_2_0_behavior(player1, matches, player2)
 
 
 
@@ -788,6 +946,7 @@ class H2HAnalysisService:
             trig_p2 += self._trigger_h2h_first_set_win_effect(player2, matches, player1)
             trig_p2 += self._trigger_h2h_seasonal_pattern(player2, matches, player1)
             trig_p2 += self._trigger_h2h_deciding_set_behavior(player2, matches, player1)
+            trig_p2 += self._trigger_h2h_lead_2_0_behavior(player2, matches, player1)
 
             self.db.commit()
 

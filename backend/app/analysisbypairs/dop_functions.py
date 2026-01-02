@@ -53,6 +53,11 @@ def calculate_severity_level(player: Player, opponent: Player, matches: list[Mat
         "h2h_losing_streak": 1.5,        # серия поражений считается более серьёзной
         "h2h_close_score_losses": 1.0,   # близкие поражения средней серьёзности
         "h2h_score_pattern": 1.2,        # часто повторяющийся счет
+        "h2h_deciding_set_behavior": 1.3, # поведение в решающем сете
+        "h2h_set_anomalies": 1.4,        # аномалии в сетах
+        "h2h_first_set_win": 1.2,        # победа в первом сете
+        "h2h_seasonal_pattern": 1.0,     # сезонные паттерны
+        "h2h_lead_2_0_behavior": 1.3,    # поведение при 2:0
     }.get(trigger_type, 1.0)
 
     # 3️⃣ Важность матчей (если есть поле is_final, is_deciding_set и т.п.)
