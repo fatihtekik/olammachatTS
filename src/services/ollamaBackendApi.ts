@@ -1,4 +1,4 @@
-import { ModelType, Message } from '../types/chat';
+import { ModelType, Message, LMStudioSettings } from '../types/chat';
 import { authAPI } from './backendApi';
 
 // Backend API URL (прокси через бэкенд к Ollama)
@@ -12,6 +12,19 @@ export function isLargeModel(modelName: string): boolean {
   return LARGE_MODELS.some((name: string) => 
     modelName.toLowerCase().includes(name.toLowerCase())
   );
+}
+
+// Получение настроек LM Studio из localStorage
+export function getLMStudioSettings(): LMStudioSettings | null {
+  try {
+    const saved = localStorage.getItem('lmstudio_settings');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error('Error loading LM Studio settings:', e);
+  }
+  return null;
 }
 
 // Заголовки для запросов
@@ -52,13 +65,17 @@ export async function sendMessage(
     // Выбираем правильный эндпоинт в зависимости от провайдера
     const endpoint = currentProvider === 'lmstudio' ? '/ollama/lmstudio/chat' : '/ollama/chat';
     
+    // Получаем настройки LM Studio если это lmstudio провайдер
+    const lmstudioSettings = currentProvider === 'lmstudio' ? getLMStudioSettings() : null;
+    
     console.log(`Sending chat request to ${endpoint} with headers:`, getHeaders());
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({
         model,
-        messages: formattedMessages
+        messages: formattedMessages,
+        ...(lmstudioSettings && { lmstudioSettings })
       }),
       credentials: 'include',  // Включаем куки для авторизации
     });
@@ -161,6 +178,9 @@ export async function sendMessageStreaming(
     // Выбираем правильный эндпоинт в зависимости от провайдера
     const endpoint = currentProvider === 'lmstudio' ? '/ollama/lmstudio/chat' : '/ollama/chat';
     
+    // Получаем настройки LM Studio если это lmstudio провайдер
+    const lmstudioSettings = currentProvider === 'lmstudio' ? getLMStudioSettings() : null;
+    
     console.log(`Sending streaming chat request to ${endpoint}`);
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
@@ -168,7 +188,8 @@ export async function sendMessageStreaming(
       body: JSON.stringify({
         model,
         messages: formattedMessages,
-        stream: true  // Включаем стриминг
+        stream: true,  // Включаем стриминг
+        ...(lmstudioSettings && { lmstudioSettings })
       }),
       credentials: 'include',
     });

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './AIProviderSettings.css';
+import LMStudioSettingsPanel from './LMStudioSettingsPanel';
+import { LMStudioSettings, DEFAULT_LMSTUDIO_SETTINGS } from '../types/chat';
 
 export type AIProvider = 'ollama' | 'lmstudio';
 
@@ -43,6 +45,20 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
   });
 
   const [isChecking, setIsChecking] = useState(false);
+  const [showLMStudioSettings, setShowLMStudioSettings] = useState(false);
+  const [lmStudioSettings, setLMStudioSettings] = useState<LMStudioSettings>(DEFAULT_LMSTUDIO_SETTINGS);
+
+  // Загрузка LM Studio настроек при монтировании
+  useEffect(() => {
+    const saved = localStorage.getItem('lmstudio_settings');
+    if (saved) {
+      try {
+        setLMStudioSettings({ ...DEFAULT_LMSTUDIO_SETTINGS, ...JSON.parse(saved) });
+      } catch (e) {
+        console.error('Error loading LM Studio settings:', e);
+      }
+    }
+  }, []);
 
   // Проверка статуса провайдеров при открытии
   useEffect(() => {
@@ -244,13 +260,25 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
               </div>
             )}
             
-            <button 
-              className={`select-provider-button ${currentProvider === 'lmstudio' ? 'active' : ''}`}
-              onClick={() => handleProviderSelect('lmstudio')}
-              disabled={providerStatus.lmstudio !== 'connected'}
-            >
-              {currentProvider === 'lmstudio' ? 'Активно' : 'Выбрать LM Studio'}
-            </button>
+            <div className="provider-actions">
+              <button 
+                className={`select-provider-button ${currentProvider === 'lmstudio' ? 'active' : ''}`}
+                onClick={() => handleProviderSelect('lmstudio')}
+                disabled={providerStatus.lmstudio !== 'connected'}
+              >
+                {currentProvider === 'lmstudio' ? 'Активно' : 'Выбрать LM Studio'}
+              </button>
+              
+              {providerStatus.lmstudio === 'connected' && (
+                <button 
+                  className="settings-button"
+                  onClick={() => setShowLMStudioSettings(true)}
+                  title="Настройки модели"
+                >
+                  <span className="settings-icon-btn">⚙</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="help-section">
@@ -286,6 +314,13 @@ const AIProviderSettings: React.FC<AIProviderSettingsProps> = ({
           </div>
         </div>
       </div>
+
+      {/* LM Studio Settings Panel */}
+      <LMStudioSettingsPanel
+        isOpen={showLMStudioSettings}
+        onClose={() => setShowLMStudioSettings(false)}
+        onSettingsChange={setLMStudioSettings}
+      />
     </div>
   );
 };

@@ -3122,8 +3122,7 @@ class MatchAnalysisService:
                             elif "choices" in data and len(data["choices"]) > 0:
                                 delta = data["choices"][0].get("delta", {})
                                 
-                                # LM Studio может отправлять content или reasoning
-                                chunk = delta.get("content", "") or delta.get("reasoning", "")
+                                chunk = delta.get("content", "")
                                 
                                 if chunk:  # Добавляем только если есть текст
                                     analysis_text += chunk
@@ -3153,6 +3152,9 @@ class MatchAnalysisService:
                     print(f"{'='*60}\n")
                     
                     if analysis_text.strip():
+                        # Удаляем <think>...</think> блоки DeepSeek из ответа
+                        analysis_text = re.sub(r'<think>.*?</think>', '', analysis_text, flags=re.DOTALL)
+                        analysis_text = analysis_text.strip()
                         return analysis_text
                     else:
                         logger.warning(f"⚠️ Пустой ответ от {provider}")
