@@ -1,6 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import './H2HTriggerModal.css';
 
+// Утилита для разделения think-блоков от основного ответа AI
+const parseAIResponse = (text: string): { thinking: string | null; response: string } => {
+  if (!text) return { thinking: null, response: '' };
+  
+  // Ищем <think>...</think> блоки (DeepSeek, и другие reasoning модели)
+  const thinkMatch = text.match(/<think>([\s\S]*?)<\/think>/i);
+  
+  if (thinkMatch) {
+    const thinking = thinkMatch[1].trim();
+    const response = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    return { thinking, response };
+  }
+  
+  return { thinking: null, response: text };
+};
+
 interface H2HTriggerModalProps {
   player1Id: string;
   player2Id: string;
@@ -151,19 +167,9 @@ const H2HTriggerModal: React.FC<H2HTriggerModalProps> = ({
 
           {!loading && !error && triggerDetails && (
             <>
-              {/* Анализ ИИ */}
-              <div className="ai-analysis-section">
-                <h3>Анализ ИИ:</h3>
-                <p className="ai-analysis-text">{triggerDetails.ai_analysis}</p>
-              </div>
-
               {/* Информация о триггере */}
               <div className="trigger-info-section">
                 <div className="trigger-info-grid">
-                  <div className="info-item">
-                    <span className="info-label">Тип триггера:</span>
-                    <span className="info-value">{triggerDetails.trigger.trigger_type}</span>
-                  </div>
                   <div className="info-item">
                     <span className="info-label">Значение:</span>
                     <span className="info-value">{triggerDetails.trigger.trigger_value}</span>

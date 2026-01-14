@@ -77,10 +77,6 @@ const PlayerCardModal: React.FC<PlayerCardModalProps> = ({
                 
                 <div className="trigger-info-grid">
                   <div className="info-item">
-                    <span className="info-label">Тип:</span>
-                    <span className="info-value">{triggerInfo.trigger_type}</span>
-                  </div>
-                  <div className="info-item">
                     <span className="info-label">Описание:</span>
                     <span className="info-value">{triggerInfo.trigger_value}</span>
                   </div>

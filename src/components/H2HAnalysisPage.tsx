@@ -2,6 +2,22 @@ import React, { useState, useEffect } from 'react';
 import './H2HAnalysisPage.css';
 import H2HTriggerModal from './H2HTriggerModal';
 
+// Утилита для разделения think-блоков от основного ответа AI
+const parseAIResponse = (text: string): { thinking: string | null; response: string } => {
+  if (!text) return { thinking: null, response: '' };
+  
+  // Ищем <think>...</think> блоки (DeepSeek, и другие reasoning модели)
+  const thinkMatch = text.match(/<think>([\s\S]*?)<\/think>/i);
+  
+  if (thinkMatch) {
+    const thinking = thinkMatch[1].trim();
+    const response = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    return { thinking, response };
+  }
+  
+  return { thinking: null, response: text };
+};
+
 interface Player {
   id: string;
   full_name: string;
@@ -120,6 +136,113 @@ const H2HAnalysisPage: React.FC = () => {
     severity: number;
   } | null>(null);
   const [showTriggerModal, setShowTriggerModal] = useState(false);
+
+  // Состояния для настроек AI (как в AnalysisPage)
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [aiProvider, setAiProvider] = useState<'ollama' | 'lmstudio'>('lmstudio');
+  const [aiAnalysisEnabled, setAiAnalysisEnabled] = useState<boolean>(true);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState<boolean>(false);
+  const [maxTokens, setMaxTokens] = useState<number>(2000);
+
+  useEffect(() => {
+    fetchPlayers();
+    // Загружаем сохранённые настройки из localStorage
+    const savedProvider = localStorage.getItem('aiProvider') as 'ollama' | 'lmstudio';
+    const savedAiAnalysisEnabled = localStorage.getItem('aiAnalysisEnabled');
+    const savedSelectedModel = localStorage.getItem('selectedModel');
+    const savedMaxTokens = localStorage.getItem('maxTokens');
+    
+    if (savedProvider) {
+      setAiProvider(savedProvider);
+    }
+    if (savedAiAnalysisEnabled !== null) {
+      setAiAnalysisEnabled(savedAiAnalysisEnabled === 'true');
+    }
+    if (savedSelectedModel) {
+      setSelectedModel(savedSelectedModel);
+    }
+    if (savedMaxTokens) {
+      setMaxTokens(parseInt(savedMaxTokens));
+    }
+  }, []);
+
+  // Загружаем модели при открытии настроек
+  useEffect(() => {
+    if (settingsOpen) {
+      loadAvailableModels(aiProvider);
+    }
+  }, [aiProvider, settingsOpen]);
+
+  const loadAvailableModels = async (provider: 'ollama' | 'lmstudio') => {
+    setIsLoadingModels(true);
+    try {
+      let url = '';
+      if (provider === 'ollama') {
+        url = 'http://localhost:11434/api/tags';
+      } else {
+        url = 'http://localhost:1234/v1/models';
+      }
+
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        let models: string[] = [];
+        
+        if (provider === 'ollama') {
+          models = data.models?.map((m: any) => m.name) || [];
+        } else {
+          models = data.data?.map((m: any) => m.id) || [];
+        }
+        
+        setAvailableModels(models);
+        if (models.length > 0 && !selectedModel) {
+          setSelectedModel(models[0]);
+        }
+      }
+    } catch (err) {
+      console.error('Ошибка загрузки моделей:', err);
+      setAvailableModels([]);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  const saveSettings = () => {
+    localStorage.setItem('aiProvider', aiProvider);
+    localStorage.setItem('aiAnalysisEnabled', aiAnalysisEnabled.toString());
+    localStorage.setItem('selectedModel', selectedModel);
+    localStorage.setItem('maxTokens', maxTokens.toString());
+    setSettingsOpen(false);
+    alert('✅ Настройки сохранены!');
+  };
+
+  const testModel = async (provider: 'ollama' | 'lmstudio', model: string): Promise<boolean> => {
+    try {
+      let url = '';
+      let body = {};
+      
+      if (provider === 'ollama') {
+        url = 'http://localhost:11434/api/generate';
+        body = { model, prompt: 'Test', stream: false };
+      } else {
+        url = 'http://localhost:1234/v1/chat/completions';
+        body = { model, messages: [{ role: 'user', content: 'Test' }], max_tokens: 10 };
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      return response.ok;
+    } catch (error) {
+      console.error('❌ Ошибка теста модели:', error);
+      return false;
+    }
+  };
 
   useEffect(() => {
     fetchPlayers();
@@ -256,8 +379,19 @@ const H2HAnalysisPage: React.FC = () => {
   return (
     <div className="h2h-analysis-page">
       <div className="page-header">
-        <h1>Анализ по парам</h1>
-        <p>Статистика встреч между игроками</p>
+        <div className="header-content">
+          <div>
+            <h1>Анализ по парам</h1>
+            <p>Статистика встреч между игроками</p>
+          </div>
+          <button 
+            className="settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="Настройки AI анализа"
+          >
+            <i className="bi bi-gear-fill"></i>
+          </button>
+        </div>
       </div>
 
       <div className="mode-selector">
@@ -498,7 +632,16 @@ const H2HAnalysisPage: React.FC = () => {
           <div className="h2h-ai-analysis">
             <h3>Анализ ИИ:</h3>
             <p className="ai-text">
-              {h2hStats.ai_analysis}
+              {(() => {
+                // Логируем полный ответ из бэкенда в консоль
+                console.log('🤖 H2H Полный AI ответ от бэкенда (с think):', h2hStats.ai_analysis);
+                const parsed = parseAIResponse(h2hStats.ai_analysis);
+                if (parsed.thinking) {
+                  console.log('💭 H2H Think блок:', parsed.thinking);
+                }
+                console.log('📝 H2H Чистый ответ:', parsed.response);
+                return parsed.response;
+              })()}
             </p>
           </div>
         </div>
@@ -699,6 +842,162 @@ const H2HAnalysisPage: React.FC = () => {
           severity={selectedTrigger.severity}
           onClose={closeTriggerModal}
         />
+      )}
+
+      {/* Модальное окно настроек AI */}
+      {settingsOpen && (
+        <div className="modal-overlay" onClick={() => setSettingsOpen(false)}>
+          <div className="modal-content settings-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3><i className="bi bi-gear-fill"></i> Настройки AI анализа</h3>
+              <button className="modal-close" onClick={() => setSettingsOpen(false)}>×</button>
+            </div>
+            
+            <div className="modal-body settings-body">
+              {/* Включение/выключение AI анализа */}
+              <div className="setting-group">
+                <label className="setting-label">
+                  <i className="bi bi-lightbulb"></i> AI Анализ
+                </label>
+                <div className="toggle-container">
+                  <label className="toggle-switch">
+                    <input
+                      type="checkbox"
+                      checked={aiAnalysisEnabled}
+                      onChange={(e) => setAiAnalysisEnabled(e.target.checked)}
+                    />
+                    <span className="toggle-slider"></span>
+                  </label>
+                  <span className="toggle-label">
+                    {aiAnalysisEnabled ? 'Включен' : 'Выключен'}
+                  </span>
+                </div>
+                {!aiAnalysisEnabled && (
+                  <p className="setting-hint warning">
+                    ⚠️ AI анализ отключен
+                  </p>
+                )}
+              </div>
+
+              {/* AI Провайдер */}
+              {aiAnalysisEnabled && (
+                <>
+                  <div className="setting-group">
+                    <label className="setting-label">
+                      <i className="bi bi-robot"></i> AI Провайдер
+                    </label>
+                    <div className="provider-selector">
+                      <button
+                        className={`provider-btn ${aiProvider === 'lmstudio' ? 'active' : ''}`}
+                        onClick={() => setAiProvider('lmstudio')}
+                      >
+                        <i className="bi bi-server"></i>
+                        <span>LM Studio</span>
+                        {aiProvider === 'lmstudio' && <span className="provider-indicator"></span>}
+                      </button>
+                      <button
+                        className={`provider-btn ${aiProvider === 'ollama' ? 'active' : ''}`}
+                        onClick={() => setAiProvider('ollama')}
+                      >
+                        <i className="bi bi-terminal"></i>
+                        <span>Ollama</span>
+                        {aiProvider === 'ollama' && <span className="provider-indicator"></span>}
+                      </button>
+                    </div>
+                    <p className="setting-hint">
+                      {aiProvider === 'lmstudio' 
+                        ? '🔷 Использует LM Studio (localhost:1234)' 
+                        : '🟢 Использует Ollama (localhost:11434)'}
+                    </p>
+                  </div>
+
+                  {/* Выбор модели */}
+                  <div className="setting-group">
+                    <label className="setting-label">
+                      <i className="bi bi-cpu"></i> Модель анализа
+                    </label>
+                    {isLoadingModels ? (
+                      <div className="loading-models">
+                        <div className="spinner-small"></div>
+                        <span>Загрузка доступных моделей...</span>
+                      </div>
+                    ) : availableModels.length > 0 ? (
+                      <>
+                        <select
+                          value={selectedModel}
+                          onChange={(e) => setSelectedModel(e.target.value)}
+                          className="model-select"
+                        >
+                          {availableModels.map(model => (
+                            <option key={model} value={model}>{model}</option>
+                          ))}
+                        </select>
+                        <button
+                          className="test-model-btn"
+                          onClick={async () => {
+                            const result = await testModel(aiProvider, selectedModel);
+                            if (result) {
+                              alert('✅ Модель работает корректно!');
+                            } else {
+                              alert('❌ Модель не отвечает. Проверьте, что она загружена в ' + aiProvider);
+                            }
+                          }}
+                        >
+                          <i className="bi bi-play-circle"></i> Проверить модель
+                        </button>
+                      </>
+                    ) : (
+                      <p className="setting-hint error">
+                        ❌ Модели не найдены. Убедитесь, что {aiProvider === 'lmstudio' ? 'LM Studio' : 'Ollama'} запущен.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Ограничение токенов */}
+                  <div className="setting-group">
+                    <label className="setting-label">
+                      <i className="bi bi-hash"></i> Ограничение токенов
+                    </label>
+                    <div className="tokens-control">
+                      <input
+                        type="range"
+                        min="200"
+                        max="8000"
+                        step="100"
+                        value={maxTokens}
+                        onChange={(e) => setMaxTokens(parseInt(e.target.value))}
+                        className="tokens-slider"
+                      />
+                      <div className="tokens-value">
+                        <input
+                          type="number"
+                          min="200"
+                          max="8000"
+                          value={maxTokens}
+                          onChange={(e) => setMaxTokens(Math.min(8000, Math.max(200, parseInt(e.target.value) || 200)))}
+                          className="tokens-input"
+                        />
+                        <span>токенов</span>
+                      </div>
+                    </div>
+                    <p className="setting-hint">
+                      📊 Макс. токенов для ответа AI (200-8000). <strong>По умолчанию: 2000</strong>
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn-cancel" onClick={() => setSettingsOpen(false)}>
+                Отмена
+              </button>
+              <button className="btn-save" onClick={saveSettings}>
+                <i className="bi bi-check-lg"></i> Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
