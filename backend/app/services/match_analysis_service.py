@@ -3060,7 +3060,7 @@ class MatchAnalysisService:
                 "messages": [
                     {
                         "role": "system", 
-                        "content": "Ты аналитик по настольному теннису. Пиши на русском языке подробный анализ причин нестандартного поведения игрока на основе предоставленных статистических данных. Приводи конкретные примеры из статистики. НЕ ПИШИ СВОИ РАССУЖДЕНИЯ. Отвечай только на основе предоставленных данных. Если данных недостаточно, честно скажи, что не можешь сделать выводы."
+                        "content": "Ты аналитик по настольному теннису. Пиши на русском языке подробный анализ причин нестандартного поведения игрока на основе предоставленных статистических данных. Приводи конкретные примеры из статистики. Отвечай только на основе предоставленных данных. Если данных недостаточно, честно скажи, что не можешь сделать выводы."
                     },
                     {"role": "user", "content": prompt}
                 ]
@@ -3068,7 +3068,7 @@ class MatchAnalysisService:
             
             # Добавляем max_tokens для LM Studio (OpenAI API)
             if provider == "lmstudio":
-                request_data["max_tokens"] = 300  # Увеличено для детального анализа
+                request_data["max_tokens"] = self._max_tokens  # Используем настройку из фронтенда
             
             async with httpx.AsyncClient(timeout=30.0) as client:
                 async with client.stream("POST", api_url, json=request_data) as response:
@@ -3122,8 +3122,7 @@ class MatchAnalysisService:
                             elif "choices" in data and len(data["choices"]) > 0:
                                 delta = data["choices"][0].get("delta", {})
                                 
-                                # LM Studio может отправлять content или reasoning
-                                chunk = delta.get("content", "") or delta.get("reasoning", "")
+                                chunk = delta.get("content", "")
                                 
                                 if chunk:  # Добавляем только если есть текст
                                     analysis_text += chunk
@@ -3153,7 +3152,9 @@ class MatchAnalysisService:
                     print(f"{'='*60}\n")
                     
                     if analysis_text.strip():
-                        return analysis_text
+                        # НЕ удаляем <think>...</think> блоки - фронт сам обрежет
+                        # analysis_text = re.sub(r'<think>.*?</think>', '', analysis_text, flags=re.DOTALL)
+                        return analysis_text.strip()
                     else:
                         logger.warning(f"⚠️ Пустой ответ от {provider}")
                         print(f"⚠️ ВНИМАНИЕ: Получен пустой ответ!")

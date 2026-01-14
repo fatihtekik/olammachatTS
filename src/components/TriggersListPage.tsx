@@ -1,6 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import './TriggersListPage.css';
 
+// Утилита для разделения think-блоков от основного ответа AI
+const parseAIResponse = (text: string): { thinking: string | null; response: string } => {
+  if (!text) return { thinking: null, response: '' };
+  
+  // Ищем <think>...</think> блоки (DeepSeek, и другие reasoning модели)
+  const thinkMatch = text.match(/<think>([\s\S]*?)<\/think>/i);
+  
+  if (thinkMatch) {
+    const thinking = thinkMatch[1].trim();
+    const response = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    return { thinking, response };
+  }
+  
+  return { thinking: null, response: text };
+};
+
 interface Trigger {
   id: string;
   player_id: string;
@@ -265,11 +281,15 @@ const TriggersListPage: React.FC = () => {
   };
 
   const renderAIAnalysis = (analysisText: string) => {
+    // Отделяем think-блоки от основного ответа
+    const { thinking, response } = parseAIResponse(analysisText);
+    const cleanText = response || analysisText;
+    
     // Парсим анализ и извлекаем структуру
-    const riskMatch = analysisText.match(/🚨\s*УРОВЕНЬ РИСКА:\s*\[?([А-ЯЁ]+)\]?/i);
-    const anomaliesMatch = analysisText.match(/📊\s*КЛЮЧЕВЫЕ АНОМАЛИИ:\s*([\s\S]+?)(?=🎯|✅|$)/);
-    const schemeMatch = analysisText.match(/🎯\s*ВЕРОЯТНАЯ СХЕМА:\s*([\s\S]+?)(?=✅|$)/);
-    const recommendationsMatch = analysisText.match(/✅\s*РЕКОМЕНДАЦИИ:\s*([\s\S]+?)$/);
+    const riskMatch = cleanText.match(/🚨\s*УРОВЕНЬ РИСКА:\s*\[?([А-ЯЁ]+)\]?/i);
+    const anomaliesMatch = cleanText.match(/📊\s*КЛЮЧЕВЫЕ АНОМАЛИИ:\s*([\s\S]+?)(?=🎯|✅|$)/);
+    const schemeMatch = cleanText.match(/🎯\s*ВЕРОЯТНАЯ СХЕМА:\s*([\s\S]+?)(?=✅|$)/);
+    const recommendationsMatch = cleanText.match(/✅\s*РЕКОМЕНДАЦИИ:\s*([\s\S]+?)$/);
 
     const riskLevel = riskMatch ? riskMatch[1].trim() : 'НЕИЗВЕСТНО';
     const anomalies = anomaliesMatch ? anomaliesMatch[1].trim() : '';

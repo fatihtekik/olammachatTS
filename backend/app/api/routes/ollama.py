@@ -31,11 +31,23 @@ router = APIRouter(tags=["ollama"])
 
 # 📋 Схемы данных (что принимаем и отдаем)
 
+class LMStudioSettingsModel(BaseModel):
+    """⚙️ Настройки LM Studio"""
+    temperature: Optional[float] = 0.7
+    maxCompletionTokens: Optional[int] = 4000
+    maxReasoningTokens: Optional[int] = 5000
+    topP: Optional[float] = 1.0
+    topK: Optional[int] = 40
+    repeatPenalty: Optional[float] = 1.1
+    reasoningEffort: Optional[str] = "medium"
+    showReasoning: Optional[bool] = False
+
 class ChatRequest(BaseModel):
     """📨 Что нам присылает фронтенд для чата"""
     model: str                          # Какую модель использовать (например, "phi3")
     messages: List[Dict[str, str]]      # История сообщений [{"role": "user", "content": "привет"}]
     stream: Optional[bool] = False      # Включить потоковую передачу
+    lmstudioSettings: Optional[LMStudioSettingsModel] = None  # Настройки LM Studio
 
 class ChatResponse(BaseModel):
     """📤 Что мы отправляем обратно фронтенду"""
@@ -228,6 +240,11 @@ async def chat_with_lmstudio(
         print(f"Количество сообщений в истории: {len(request.messages)}")
         print(f"Режим стриминга: {request.stream}")
         
+        # Получаем настройки LM Studio (или None)
+        lmstudio_settings = request.lmstudioSettings.model_dump() if request.lmstudioSettings else None
+        if lmstudio_settings:
+            print(f"Настройки LM Studio: {lmstudio_settings}")
+        
         # Проверяем подключение
         is_connected = await test_lm_studio_connection()
         if not is_connected:
@@ -238,7 +255,11 @@ async def chat_with_lmstudio(
         if request.stream:
             async def generate():
                 try:
-                    async for chunk in stream_message_to_lm_studio(model=request.model, messages=request.messages):
+                    async for chunk in stream_message_to_lm_studio(
+                        model=request.model, 
+                        messages=request.messages,
+                        settings=lmstudio_settings
+                    ):
                         # Отправляем chunk в формате NDJSON
                         import json
                         yield json.dumps({"content": chunk}) + "\n"
@@ -249,7 +270,11 @@ async def chat_with_lmstudio(
             return StreamingResponse(generate(), media_type="application/x-ndjson")
         else:
             # Обычный режим без стриминга
-            response = await send_message_to_lm_studio(model=request.model, messages=request.messages)
+            response = await send_message_to_lm_studio(
+                model=request.model, 
+                messages=request.messages,
+                settings=lmstudio_settings
+            )
             
             if not response or response.strip() == "":
                 print("ВНИМАНИЕ: Получен пустой ответ от LM Studio!")

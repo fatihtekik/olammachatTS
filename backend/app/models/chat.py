@@ -32,7 +32,6 @@ class ChatSession(ChatSessionBase, table=True):
     messages: List[ChatMessage] = Relationship(back_populates="session")
     
     def to_dict(self) -> Dict[str, Any]:
-        print("AJAJAJAJAJAJAJAJA")
         """Преобразование сессии в словарь для отправки на фронтенд"""
         return {
             "id": self.id,

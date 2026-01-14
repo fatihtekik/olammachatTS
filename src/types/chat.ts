@@ -55,3 +55,26 @@ export interface TriggerResponse {
   context: string;
   ollama_response: string;
 }
+
+// LM Studio настройки модели
+export interface LMStudioSettings {
+  temperature: number;           // 0.0 - 2.0, по умолчанию 0.7
+  maxCompletionTokens: number;   // Токены для ответа
+  maxReasoningTokens: number;    // Токены для thinking/reasoning
+  topP: number;                  // 0.0 - 1.0, по умолчанию 1.0
+  topK: number;                  // 1 - 100, по умолчанию 40
+  repeatPenalty: number;         // 1.0 - 2.0, по умолчанию 1.1
+  reasoningEffort: 'low' | 'medium' | 'high';  // Усилие reasoning
+  showReasoning: boolean;        // Показывать ли thinking в ответе
+}
+
+export const DEFAULT_LMSTUDIO_SETTINGS: LMStudioSettings = {
+  temperature: 0.7,
+  maxCompletionTokens: 4000,
+  maxReasoningTokens: 5000,
+  topP: 1.0,
+  topK: 40,
+  repeatPenalty: 1.1,
+  reasoningEffort: 'medium',
+  showReasoning: false
+};

@@ -5,6 +5,22 @@ import { useInvalidateStats } from '../hooks/useDashboardStats';
 import PlayerCardModal from './PlayerCardModal';
 import './AnalysisPage.css';
 
+// Утилита для разделения think-блоков от основного ответа AI
+const parseAIResponse = (text: string): { thinking: string | null; response: string } => {
+  if (!text) return { thinking: null, response: '' };
+  
+  // Ищем <think>...</think> блоки (DeepSeek, и другие reasoning модели)
+  const thinkMatch = text.match(/<think>([\s\S]*?)<\/think>/i);
+  
+  if (thinkMatch) {
+    const thinking = thinkMatch[1].trim();
+    const response = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    return { thinking, response };
+  }
+  
+  return { thinking: null, response: text };
+};
+
 // === ТИПЫ ДАННЫХ ===
 interface TriggerType {
   id: string;
@@ -891,7 +907,16 @@ const AnalysisPage: React.FC = () => {
                                   {!aiAnalysisEnabled ? (
                                     <p style={{ color: '#6b7280', fontStyle: 'italic' }}>Был отключен</p>
                                   ) : mainTrigger.ai_analysis ? (
-                                    <p>{mainTrigger.ai_analysis}</p>
+                                    <p>{(() => {
+                                      // Логируем полный ответ из бэкенда в консоль
+                                      console.log('🤖 Полный AI ответ от бэкенда (с think):', mainTrigger.ai_analysis);
+                                      const parsed = parseAIResponse(mainTrigger.ai_analysis);
+                                      if (parsed.thinking) {
+                                        console.log('💭 Think блок:', parsed.thinking);
+                                      }
+                                      console.log('📝 Чистый ответ:', parsed.response);
+                                      return parsed.response;
+                                    })()}</p>
                                   ) : (
                                     <p style={{ color: '#6b7280', fontStyle: 'italic' }}>Нет данных</p>
                                   )}
@@ -1078,7 +1103,7 @@ const AnalysisPage: React.FC = () => {
                     <div className="tokens-control">
                       <input
                         type="range"
-                        min="500"
+                        min="200"
                         max="8000"
                         step="100"
                         value={maxTokens}
@@ -1088,17 +1113,17 @@ const AnalysisPage: React.FC = () => {
                       <div className="tokens-value">
                         <input
                           type="number"
-                          min="500"
+                          min="200"
                           max="8000"
                           value={maxTokens}
-                          onChange={(e) => setMaxTokens(Math.min(8000, Math.max(500, parseInt(e.target.value) || 500)))}
+                          onChange={(e) => setMaxTokens(Math.min(8000, Math.max(200, parseInt(e.target.value) || 200)))}
                           className="tokens-input"
                         />
                         <span>токенов</span>
                       </div>
                     </div>
                     <p className="setting-hint">
-                      📊 Максимальное количество токенов для ответа AI (500-8000)
+                      📊 Макс. токенов для ответа AI (200-8000). <strong>По умолчанию: 2000</strong>
                     </p>
                   </div>
                 </>
