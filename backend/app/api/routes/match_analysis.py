@@ -1,6 +1,7 @@
 from datetime import datetime
 import json
 from typing import List, Optional
+from app.analysisbypairs.ai_generation import ai_generate
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -1196,12 +1197,7 @@ async def get_h2h_analysis(
         # Получаем НОВЫЕ H2H триггеры
         service = H2HAnalysisService(db)
         h2h_p1, h2h_p2, _ = service.analyze_h2h(player1_id, player2_id, target_date)
-        # print("H2H triggers:", h2h_p1, h2h_p2)
-        # print("!!!!!!!!!!!!!!!!!P1 triggers JSON:!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        # print(json.dumps(jsonable_encoder(h2h_p1), indent=4, ensure_ascii=False))
 
-        # print("P2 triggers JSON:")
-        # print(json.dumps([t.to_dict() for t in h2h_p2], indent=4, ensure_ascii=False))
 
         # Если матчей нет — возвращаем пустой стандартный формат
         if not matches:
@@ -1269,41 +1265,53 @@ async def get_h2h_analysis(
         player1_wins = sum(1 for m in matches if m.winner_id == player1_id)
         player2_wins = sum(1 for m in matches if m.winner_id == player2_id)
 
-        ai_text = (
-            f"Анализ {len(matches)} матчей между {player1.full_name} и {player2.full_name}. "
-            f"Счёт встреч: {player1_wins}:{player2_wins}. "
-        )
+        # ai_text = (
+        #     f"Анализ {len(matches)} матчей между {player1.full_name} и {player2.full_name}. "
+        #     f"Счёт встреч: {player1_wins}:{player2_wins}. "
+        # )
+        ai_payload = {
+            "player1": {
+                "name": player1.full_name,
+                "rating": player1.current_rating,
+                "triggers": [
+                    {
+                        "type": t.trigger_type,
+                        "value": t.trigger_value,
+                        "severity": t.severity_level
+                    }
+                    for t in h2h_p1
+                ]
+            },
+            "player2": {
+                "name": player2.full_name,
+                "rating": player2.current_rating,
+                "triggers": [
+                    {
+                        "type": t.trigger_type,
+                        "value": t.trigger_value,
+                        "severity": t.severity_level
+                    }
+                    for t in h2h_p2
+                ]
+            },
+            "h2h": {
+                "matches_count": len(matches),
+                "player1_wins": player1_wins,
+                "player2_wins": player2_wins
+            },
+            "matches": [
+                {
+                    "date": m["date"],
+                    "score": m["score"],
+                    "winner_id": m["winner_id"]
+                }
+                for m in matches_data
+            ]
+        }
 
-        if player1_wins > player2_wins:
-            ai_text += f"{player1.full_name} доминирует."
-        elif player2_wins > player1_wins:
-            ai_text += f"{player2.full_name} доминирует."
-        else:
-            ai_text += "Равное противостояние."
+        ai_text = ai_generate(ai_payload)
 
-        # # Возвращаем в старом формате, но triggers = ТОЛЬКО новые H2H
-        # return {
-        #     "player1": {
-        #         "id": player1.id,
-        #         "full_name": player1.full_name,
-        #         "current_rating": player1.current_rating,
-        #         "triggers": [
-        #             {"type": t.trigger_type, "severity": t.severity_level}
-        #             for t in h2h_p1
-        #         ]
-        #     },
-        #     "player2": {
-        #         "id": player2.id,
-        #         "full_name": player2.full_name,
-        #         "current_rating": player2.current_rating,
-        #         "triggers": [
-        #             {"type": t.trigger_type, "severity": t.severity_level}
-        #             for t in h2h_p2
-        #         ]
-        #     },
-        #     "matches": matches_data,
-        #     "ai_analysis": ai_text
-        # }
+    
         response_data = {
             "player1": {
                 "id": player1.id,
@@ -1348,7 +1356,7 @@ async def get_h2h_analysis(
             "ai_analysis": ai_text
         }
 
-        # 👍 Делаем КОПИЮ в jsonable_encoder — оригинал не трогаем!
+        #  Делаем КОПИЮ в jsonable_encoder — оригинал не трогаем!
         encoded = jsonable_encoder(response_data1)
 
         print("📌 FINAL RESPONSE JSON:")
