@@ -146,6 +146,11 @@ const H2HAnalysisPage: React.FC = () => {
   const [isLoadingModels, setIsLoadingModels] = useState<boolean>(false);
   const [maxTokens, setMaxTokens] = useState<number>(2000);
 
+  const [matchAiText, setMatchAiText] = useState<string>('');
+  const [matchAiLoading, setMatchAiLoading] = useState<boolean>(false);
+  const [matchAiError, setMatchAiError] = useState<string>('');
+
+
   useEffect(() => {
     fetchPlayers();
     // Загружаем сохранённые настройки из localStorage
@@ -294,6 +299,63 @@ const H2HAnalysisPage: React.FC = () => {
     }
   };
 
+  const handleMatchAiAnalysis = async () => {
+  if (!selectedMatch || !modalPlayers || !h2hStats) return;
+
+  setMatchAiLoading(true);
+  setMatchAiError('');
+
+  try {
+    // Сбор триггеров для каждого игрока
+const player1Triggers = h2hStats.player1.triggers.map(t => ({
+  type: t.type,
+  value: t.trigger_value, // <--- берем только значение
+  severity: t.severity,
+}));
+
+const player2Triggers = h2hStats.player2.triggers.map(t => ({
+  type: t.type,
+  value: t.trigger_value,
+  severity: t.severity,
+}));
+
+
+    const response = await fetch(
+      'http://localhost:8000/api/v1/match-analysis/match-ai',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          match_id: selectedMatch.id,
+          player1_id: modalPlayers.player1.id,
+          player2_id: modalPlayers.player2.id,
+          model: selectedModel,
+          provider: aiProvider,
+          max_tokens: maxTokens,
+          triggers: {
+  player1: player1Triggers,
+  player2: player2Triggers,
+},
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Ошибка AI анализа');
+    }
+
+    const data = await response.json();
+
+    // ❗ ХРАНИМ ПОЛНЫЙ ТЕКСТ (С think)
+    setMatchAiText(data.ai_text || '');
+  } catch (err: any) {
+    setMatchAiError(err.message || 'Ошибка AI анализа');
+  } finally {
+    setMatchAiLoading(false);
+  }
+};
+
+
   const handleAnalyzeByDate = async () => {
     if (!dateForAnalysis) {
       setError('Выберите дату для анализа');
@@ -342,6 +404,9 @@ const H2HAnalysisPage: React.FC = () => {
     setSelectedMatch(match);
     setModalPlayers({ player1, player2 });
     setShowModal(true);
+
+    setMatchAiText('');
+    setMatchAiError('');
   };
 
   const closeModal = () => {
@@ -742,93 +807,78 @@ const H2HAnalysisPage: React.FC = () => {
       )}
 
       {showModal && selectedMatch && modalPlayers && (
-        <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={closeModal}>×</button>
-            
-            <div className="modal-body">
-              <div className="modal-match-layout">
-                <div className="modal-player-section">
-                  <div className="modal-player-header">Игрок 1</div>
-                  <div className="modal-player-name-large">{modalPlayers.player1.full_name}</div>
-                  <div className="modal-player-rating">Рейтинг: {modalPlayers.player1.current_rating}</div>
-                  
-                  <div className="modal-triggers-section">
-                    <h4>Триггеры:</h4>
-                    <div className="modal-triggers-badges">
-                      {selectedMatch.player1_triggers.length > 0 ? (
-                        selectedMatch.player1_triggers.map((trigger: any, idx: number) => (
-                          <span 
-                            key={idx} 
-                            className={`trigger-badge trigger-${getSeverityClass(trigger.severity)}`}
-                          >
-                            {trigger.type}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="no-triggers">Нет активных триггеров</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+  <div className="modal-overlay" onClick={closeModal}>
+    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+      <button className="modal-close" onClick={closeModal}>×</button>
 
-                <div className="modal-score-section">
-                  <div className="modal-score-large">
-                    <span className="score-big">{selectedMatch.score.split(':')[0]}</span>
-                    <span className="score-separator">:</span>
-                    <span className="score-big">{selectedMatch.score.split(':')[1]}</span>
-                  </div>
-                  
-                  <div className="modal-sets-small">
-                    Счет по сетам
-                    <div className="sets-grid-small">
-                      {selectedMatch.sets.map((set: any, idx: number) => (
-                        <div key={idx} className="set-row-small">
-                          <span>{set.player1_points}</span>
-                          <span>|</span>
-                          <span>{set.player2_points}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+      <div className="modal-body">
+        <div className="modal-match-layout">
 
-                <div className="modal-player-section">
-                  <div className="modal-player-header">Игрок 2</div>
-                  <div className="modal-player-name-large">{modalPlayers.player2.full_name}</div>
-                  <div className="modal-player-rating">Рейтинг: {modalPlayers.player2.current_rating}</div>
-                  
-                  <div className="modal-triggers-section">
-                    <h4>Триггеры:</h4>
-                    <div className="modal-triggers-badges">
-                      {selectedMatch.player2_triggers.length > 0 ? (
-                        selectedMatch.player2_triggers.map((trigger: any, idx: number) => (
-                          <span 
-                            key={idx} 
-                            className={`trigger-badge trigger-${getSeverityClass(trigger.severity)}`}
-                          >
-                            {trigger.type}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="no-triggers">Нет активных триггеров</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
+          {/* Игрок 1 */}
+          <div className="modal-player-section">
+            <div className="modal-player-header">Игрок 1</div>
+            <div className="modal-player-name-large">
+              {modalPlayers.player1.full_name}
+            </div>
+            <div className="modal-player-rating">
+              Рейтинг: {modalPlayers.player1.current_rating}
+            </div>
+          </div>
 
-              <div className="modal-section ai-analysis-section">
-                <h3>AI Анализ</h3>
-                <div className="ai-analysis-placeholder">
-                  <p>Готово для AI анализа матча между {modalPlayers.player1.full_name} и {modalPlayers.player2.full_name}</p>
-                  <button className="ai-analyze-btn">Получить AI анализ</button>
-                </div>
-              </div>
+          {/* Счёт */}
+          <div className="modal-score-section">
+            <div className="modal-score-large">
+              <span className="score-big">{selectedMatch.score.split(':')[0]}</span>
+              <span className="score-separator">:</span>
+              <span className="score-big">{selectedMatch.score.split(':')[1]}</span>
+            </div>
+          </div>
+
+          {/* Игрок 2 */}
+          <div className="modal-player-section">
+            <div className="modal-player-header">Игрок 2</div>
+            <div className="modal-player-name-large">
+              {modalPlayers.player2.full_name}
+            </div>
+            <div className="modal-player-rating">
+              Рейтинг: {modalPlayers.player2.current_rating}
             </div>
           </div>
         </div>
-      )}
+
+        {/* AI АНАЛИЗ */}
+        <div className="modal-section ai-analysis-section">
+          <h3>AI Анализ</h3>
+
+          {matchAiError && (
+            <div className="error-message">{matchAiError}</div>
+          )}
+
+          {matchAiText ? (
+            <div className="ai-result">
+              <p>{parseAIResponse(matchAiText).response}</p>
+            </div>
+          ) : (
+            <p className="ai-placeholder">
+              Готово для AI анализа матча между{' '}
+              {modalPlayers.player1.full_name} и{' '}
+              {modalPlayers.player2.full_name}
+            </p>
+          )}
+
+          <button
+            className="ai-analyze-btn"
+            onClick={handleMatchAiAnalysis}
+            disabled={matchAiLoading}
+          >
+            {matchAiLoading ? 'AI анализ...' : 'Получить AI анализ'}
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+)}
 
       {/* Модальное окно деталей триггера H2H */}
       {showTriggerModal && selectedTrigger && (

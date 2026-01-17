@@ -1,7 +1,9 @@
+from ast import Dict
 from datetime import datetime
 import json
-from typing import List, Optional
+from typing import Any, List, Optional
 from app.analysisbypairs.ai_generation import ai_generate
+from app.analysisbypairs.dop_functions import ai_generate_match
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -1622,3 +1624,45 @@ async def get_h2h_trigger_details(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+@router.post("/match-ai")
+async def match_ai_analysis(payload: dict, db: Session = Depends(get_db)):
+    """
+    AI анализ конкретного матча с учетом триггеров игроков.
+    payload должен содержать:
+    - match_id
+    - player1_id
+    - player2_id
+    - triggers: { player1: [...], player2: [...] }
+    - model, provider, max_tokens (опционально)
+    """
+
+    match_id = payload.get("match_id")
+    player1_id = payload.get("player1_id")
+    player2_id = payload.get("player2_id")
+    triggers = payload.get("triggers", {})  # новый объект с триггерами
+
+    match = db.query(Match).filter(Match.id == match_id).first()
+    player1 = db.query(Player).filter(Player.id == player1_id).first()
+    player2 = db.query(Player).filter(Player.id == player2_id).first()
+
+    if not match or not player1 or not player2:
+        raise HTTPException(status_code=404, detail="Match or players not found")
+
+    ai_text = ai_generate_match(
+    match=match,
+    player1=player1,
+    player2=player2,
+    triggers_player1=payload.get("triggers", {}).get("player1", []),
+    triggers_player2=payload.get("triggers", {}).get("player2", []),
+    winner_id=match.winner_id,
+    db=db,
+
+    max_tokens=payload.get("max_tokens", 2000)
+)
+    return {
+        "ai_text": ai_text  # ❗ полный текст с think
+    }
