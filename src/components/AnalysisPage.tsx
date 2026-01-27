@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { analysisHistoryService } from '../services/analysisHistoryService';
 import { useInvalidateStats } from '../hooks/useDashboardStats';
 import PlayerCardModal from './PlayerCardModal';
+import { exportAnalysisToExcel } from '../utils/analysisExcelExport';
 import './AnalysisPage.css';
 
 // Утилита для разделения think-блоков от основного ответа AI
@@ -731,7 +732,17 @@ const AnalysisPage: React.FC = () => {
           {analysisResult && (
             <div className="analysis-results">
               <div className="results-summary">
-                <h3>Результаты анализа</h3>
+                <div className="results-summary-header">
+                  <h3>Результаты анализа</h3>
+                  <button 
+                    className="export-excel-btn"
+                    onClick={() => exportAnalysisToExcel(analysisResult)}
+                    title="Экспортировать в Excel"
+                  >
+                    <i className="bi bi-file-earmark-excel"></i>
+                    Экспорт в Excel
+                  </button>
+                </div>
                 <div className="summary-stats">
                   <div className="stat-card">
                     <span className="stat-number">{analysisResult.total_players}</span>
