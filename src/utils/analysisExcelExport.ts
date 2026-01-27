@@ -220,8 +220,16 @@ export const exportAnalysisToExcel = (analysisResult: AnalysisResult): void => {
     { wch: 15 },  // Сеты
     { wch: 15 },  // Форма
     { wch: 25 },  // Период
-    { wch: 60 }   // AI Анализ
+    { wch: 100 }  // AI Анализ - увеличенная ширина для длинного текста
   ];
+
+  // Включаем перенос текста для колонки AI Анализ
+  for (let i = 1; i <= triggersData.length; i++) {
+    const cellRef = XLSX.utils.encode_cell({ r: i, c: 12 }); // Колонка M (AI Анализ)
+    if (triggersSheet[cellRef]) {
+      triggersSheet[cellRef].s = { alignment: { wrapText: true, vertical: 'top' } };
+    }
+  }
   
   XLSX.utils.book_append_sheet(workbook, triggersSheet, 'Все триггеры');
 
@@ -481,6 +489,61 @@ export const exportAnalysisToExcel = (analysisResult: AnalysisResult): void => {
   ];
   
   XLSX.utils.book_append_sheet(workbook, triggerStatsSheet, 'Статистика по триггерам');
+
+  // === ЛИСТ 7: ДЕТАЛЬНЫЙ AI АНАЛИЗ ===
+  const aiAnalysisHeaders = [
+    'Игрок',
+    'Рейтинг',
+    'Тип триггера',
+    'Описание проблемы',
+    'AI Анализ (полный текст)'
+  ];
+
+  const aiAnalysisData: any[][] = [];
+  
+  // Собираем уникальные записи игрок + триггер с AI анализом
+  const seenAiAnalysis = new Set<string>();
+  
+  analysisResult.triggers.forEach(trigger => {
+    const aiText = cleanAIResponse(trigger.ai_analysis);
+    if (aiText) {
+      const key = `${trigger.player_id}-${trigger.trigger_type}`;
+      if (!seenAiAnalysis.has(key)) {
+        seenAiAnalysis.add(key);
+        aiAnalysisData.push([
+          trigger.player_name,
+          trigger.player_rating || '',
+          triggerTypeNames[trigger.trigger_type] || trigger.trigger_type,
+          trigger.trigger_value,
+          aiText
+        ]);
+      }
+    }
+  });
+
+  if (aiAnalysisData.length > 0) {
+    const aiAnalysisSheetData = [aiAnalysisHeaders, ...aiAnalysisData];
+    const aiAnalysisSheet = XLSX.utils.aoa_to_sheet(aiAnalysisSheetData);
+    
+    // Устанавливаем ширину колонок
+    aiAnalysisSheet['!cols'] = [
+      { wch: 25 },   // Игрок
+      { wch: 10 },   // Рейтинг
+      { wch: 30 },   // Тип триггера
+      { wch: 50 },   // Описание проблемы
+      { wch: 150 }   // AI Анализ - очень широкая колонка
+    ];
+    
+    // Включаем перенос текста для колонки AI Анализ
+    for (let i = 1; i <= aiAnalysisData.length; i++) {
+      const cellRef = XLSX.utils.encode_cell({ r: i, c: 4 }); // Колонка E (AI Анализ)
+      if (aiAnalysisSheet[cellRef]) {
+        aiAnalysisSheet[cellRef].s = { alignment: { wrapText: true, vertical: 'top' } };
+      }
+    }
+    
+    XLSX.utils.book_append_sheet(workbook, aiAnalysisSheet, 'AI Анализ игроков');
+  }
 
   // === СОХРАНЯЕМ ФАЙЛ ===
   const dateStart = formatDate(analysisResult.period_start).replace(/\./g, '-');
