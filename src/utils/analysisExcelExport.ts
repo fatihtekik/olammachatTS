@@ -102,12 +102,33 @@ const cleanAIResponse = (text: string | undefined): string => {
 };
 
 // Форматируем дату
-const formatDate = (dateString: string): string => {
+const formatDate = (dateString: string | null | undefined): string => {
   if (!dateString) return '';
+  
   try {
-    return new Date(dateString).toLocaleDateString('ru-RU');
+    // Если дата уже в формате DD.MM.YYYY (от бэкенда) - возвращаем как есть
+    const russianDateMatch = dateString.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (russianDateMatch) {
+      // Дата уже в нужном формате, просто возвращаем
+      return dateString;
+    }
+    
+    // Пробуем распарсить как ISO или другой формат
+    const date = new Date(dateString);
+    
+    // Проверяем, что дата валидна
+    if (isNaN(date.getTime())) {
+      // Последняя попытка: может быть формат YYYY-MM-DD
+      const isoMatch = dateString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        return `${isoMatch[3]}.${isoMatch[2]}.${isoMatch[1]}`;
+      }
+      return '';
+    }
+    
+    return date.toLocaleDateString('ru-RU');
   } catch {
-    return dateString;
+    return '';
   }
 };
 
@@ -266,12 +287,12 @@ export const exportAnalysisToExcel = (analysisResult: AnalysisResult): void => {
           ev.opponent,
           ev.opponent_rating || '',
           ev.was_favorite ? 'Фаворит' : 'Аутсайдер',
-          ev.rating_diff,
+          ev.rating_diff ?? '',
           ev.score,
           formatSets(ev.sets),
-          ev.serve_efficiency !== undefined ? ev.serve_efficiency.toFixed(1) : '',
-          ev.receive_efficiency !== undefined ? ev.receive_efficiency.toFixed(1) : '',
-          ev.highlight,
+          ev.serve_efficiency != null ? ev.serve_efficiency.toFixed(1) : '',
+          ev.receive_efficiency != null ? ev.receive_efficiency.toFixed(1) : '',
+          ev.highlight || '',
           formatRedFlags(ev.red_flags)
         ]);
       });
