@@ -41,6 +41,7 @@ class MatchAnalysisService:
     def __init__(self, db: Session):
         self.db = db
         self.last_uploaded_player_ids = []  # Инстансовый список ID игроков из последнего загруженного файла
+        self._found_duplicates = []  # Список найденных дубликатов для вывода в конце
 
         # Настройки AI анализа
         self._ai_analysis_enabled = True  # Флаг для включения/выключения ИИ
@@ -85,6 +86,7 @@ class MatchAnalysisService:
             skipped_duplicates = 0
             errors = []
             file_player_ids = set()  # Отслеживаем ID игроков из этого файла
+            self._found_duplicates = []  # Очищаем список дубликатов перед новой загрузкой
             
             print(f"🔄 Начинаем обработку {len(excel_data)} строк из Excel...")
             
@@ -121,7 +123,7 @@ class MatchAnalysisService:
                     part_id = getattr(match_data, 'part_id', None)  # Пока нет в схеме
                     
                     # Проверяем, не существует ли уже такой матч (приоритет по SL-ID)
-                    if self._match_exists(
+                    is_duplicate, duplicate_info = self._match_exists(
                         sl_id=sl_id,
                         part_id=part_id,
                         date=match_date, 
@@ -129,8 +131,18 @@ class MatchAnalysisService:
                         player2_id=player2.id, 
                         score=match_data.счёт, 
                         time_str=match_data.время
-                    ):
+                    )
+                    if is_duplicate:
                         skipped_duplicates += 1
+                        # Сохраняем информацию о дубликате
+                        self._found_duplicates.append({
+                            "sl_id": sl_id,
+                            "player1": match_data.игрок_1,
+                            "player2": match_data.игрок_2,
+                            "date": str(match_date),
+                            "score": match_data.счёт,
+                            "reason": duplicate_info
+                        })
                         msg = f"⏭️  Пропускаем дубликат: {match_data.игрок_1} vs {match_data.игрок_2} от {match_date}"
                         print(msg)
                         log_match_analysis(msg)
@@ -167,6 +179,22 @@ class MatchAnalysisService:
             print(f"  - Пропущено дубликатов: {skipped_duplicates}")
             print(f"  - Игроков в файле: {len(file_player_ids)}")
             print(f"  - Ошибок: {len(errors)}")
+            
+            # Выводим детальную информацию о дубликатах
+            if self._found_duplicates:
+                print(f"\n{'='*60}")
+                print(f"📋 СПИСОК НАЙДЕННЫХ ДУБЛИКАТОВ ({len(self._found_duplicates)} шт.):")
+                print(f"{'='*60}")
+                for i, dup in enumerate(self._found_duplicates, 1):
+                    print(f"  {i}. SL-ID: {dup['sl_id'] or 'N/A'}")
+                    print(f"     Матч: {dup['player1']} vs {dup['player2']}")
+                    print(f"     Дата: {dup['date']}, Счёт: {dup['score']}")
+                    print(f"     Причина: {dup['reason']}")
+                    print(f"     {'-'*40}")
+                print(f"{'='*60}\n")
+            
+            # Добавляем информацию о дубликатах в результат
+            result["duplicates_details"] = self._found_duplicates
 
             return result
             
@@ -1515,7 +1543,7 @@ class MatchAnalysisService:
         
     def _match_exists(self, sl_id: str = None, part_id: str = None, 
                       date: date = None, player1_id: int = None, player2_id: int = None, 
-                      score: str = None, time_str: str = None) -> bool:
+                      score: str = None, time_str: str = None) -> tuple:
         """
         Проверяет существование матча в базе данных.
         
@@ -1530,6 +1558,9 @@ class MatchAnalysisService:
             player2_id: ID второго игрока
             score: Счет матча
             time_str: Время матча
+            
+        Returns:
+            tuple: (is_duplicate: bool, reason: str) - флаг дубликата и причина
         """
         from datetime import datetime
 
@@ -1539,8 +1570,9 @@ class MatchAnalysisService:
                 sl_id_int = int(sl_id)
                 existing = self.db.query(Match).filter(Match.match_sl_id == sl_id_int).first()
                 if existing:
+                    reason = f"SL-ID {sl_id} уже существует в БД (match_id={existing.id})"
                     print(f"   ⏭️  Найден дубликат по SL-ID: {sl_id}")
-                    return True
+                    return (True, reason)
             except (ValueError, TypeError):
                 pass
         
@@ -1552,7 +1584,7 @@ class MatchAnalysisService:
         # Оставлена только проверка по SL-ID
         """
         if not date or not player1_id or not player2_id:
-            return False
+            return (False, "")
 
         # Преобразуем строку времени в datetime.time, если возможно
         try:
@@ -1583,11 +1615,12 @@ class MatchAnalysisService:
             score_match = normalized_score == match_score
 
             if time_match and score_match:
+                reason = f"Совпадение по дате/игрокам/времени/счету (match_id={m.id})"
                 print(f"   ⏭️  Найден дубликат по дате/игрокам/времени/счету")
-                return True
+                return (True, reason)
         """
 
-        return False
+        return (False, "")
 
 
 

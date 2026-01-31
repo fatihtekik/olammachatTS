@@ -27,7 +27,13 @@ const ScenarioAnalysisTab: React.FC<ScenarioAnalysisTabProps> = ({ playerId, pla
       const response = await scenarioAPI.getPlayerScenarios(playerId);
       setScenarios(response.scenarios);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ошибка загрузки данных');
+      const message = err instanceof Error ? err.message : 'Ошибка загрузки данных';
+      // Проверяем на 404 - данные устарели
+      if (message.includes('Not Found') || message.includes('404')) {
+        setError('Данные устарели. Игрок не найден в базе данных.');
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -59,10 +65,15 @@ const ScenarioAnalysisTab: React.FC<ScenarioAnalysisTabProps> = ({ playerId, pla
   }
 
   if (error) {
+    const isOutdated = error.includes('устарели');
     return (
       <div className="scenario-analysis-error">
-        <p>{error}</p>
-        <button onClick={loadScenarios}>Повторить</button>
+        <p>{isOutdated ? '⚠️ ' : ''}{error}</p>
+        {isOutdated ? (
+          <p className="outdated-hint">Эти данные были сохранены в истории, но игрок больше не существует в базе данных.</p>
+        ) : (
+          <button onClick={loadScenarios}>Повторить</button>
+        )}
       </div>
     );
   }

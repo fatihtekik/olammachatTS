@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import './H2HAnalysisPage.css';
 import H2HTriggerModal from './H2HTriggerModal';
+import { h2hHistoryService } from '../services/h2hHistoryService';
+import { exportH2HToExcel, exportDateAnalysisToExcel } from '../utils/h2hExcelExport';
 
 // Утилита для разделения think-блоков от основного ответа AI
 const parseAIResponse = (text: string): { thinking: string | null; response: string } => {
@@ -149,6 +152,8 @@ const H2HAnalysisPage: React.FC = () => {
   const [matchAiText, setMatchAiText] = useState<string>('');
   const [matchAiLoading, setMatchAiLoading] = useState<boolean>(false);
   const [matchAiError, setMatchAiError] = useState<string>('');
+  
+  const location = useLocation();
 
 
   useEffect(() => {
@@ -171,7 +176,25 @@ const H2HAnalysisPage: React.FC = () => {
     if (savedMaxTokens) {
       setMaxTokens(parseInt(savedMaxTokens));
     }
-  }, []);
+    
+    // Восстанавливаем анализ из истории если есть
+    const historyState = location.state as { h2hHistory?: any } | null;
+    if (historyState?.h2hHistory) {
+      const historyData = historyState.h2hHistory;
+      console.log('📂 Восстанавливаем H2H анализ из истории:', historyData);
+      
+      if (historyData.analysisType === 'players' && historyData.fullData) {
+        setH2hStats(historyData.fullData);
+        setAnalysisMode('players');
+        if (historyData.player1?.id) setPlayer1Id(historyData.player1.id);
+        if (historyData.player2?.id) setPlayer2Id(historyData.player2.id);
+      } else if (historyData.analysisType === 'date' && historyData.fullData) {
+        setDateAnalysis(historyData.fullData);
+        setAnalysisMode('date');
+        if (historyData.dateForAnalysis) setDateForAnalysis(historyData.dateForAnalysis);
+      }
+    }
+  }, [location.state]);
 
   // Загружаем модели при открытии настроек
   useEffect(() => {
@@ -292,6 +315,33 @@ const H2HAnalysisPage: React.FC = () => {
       
       const data = await response.json();
       setH2hStats(data);
+      
+      // Сохраняем H2H анализ в историю
+      try {
+        const totalTriggers = (data.player1?.triggers?.length || 0) + (data.player2?.triggers?.length || 0);
+        await h2hHistoryService.saveH2HAnalysis({
+          analysisType: 'players',
+          player1: data.player1 ? {
+            id: data.player1.id,
+            full_name: data.player1.full_name,
+            current_rating: data.player1.current_rating
+          } : undefined,
+          player2: data.player2 ? {
+            id: data.player2.id,
+            full_name: data.player2.full_name,
+            current_rating: data.player2.current_rating
+          } : undefined,
+          matchDate: matchDate || undefined,
+          totalMatches: data.matches?.length || 0,
+          triggersFound: totalTriggers,
+          aiProvider: aiProvider,
+          aiAnalysis: data.ai_analysis || undefined,
+          fullData: data
+        });
+        console.log('✅ H2H анализ сохранён в историю');
+      } catch (historyErr) {
+        console.error('⚠️ Ошибка сохранения в историю:', historyErr);
+      }
     } catch (err: any) {
       setError(err.message || 'Ошибка анализа');
     } finally {
@@ -377,6 +427,28 @@ const player2Triggers = h2hStats.player2.triggers.map(t => ({
       
       const data = await response.json();
       setDateAnalysis(data);
+      
+      // Сохраняем H2H анализ по дате в историю
+      try {
+        const totalTriggers = data.pairs?.reduce((sum: number, pair: any) => {
+          return sum + (pair.matches?.reduce((mSum: number, m: any) => {
+            return mSum + (m.player1_triggers?.length || 0) + (m.player2_triggers?.length || 0);
+          }, 0) || 0);
+        }, 0) || 0;
+        
+        await h2hHistoryService.saveH2HAnalysis({
+          analysisType: 'date',
+          dateForAnalysis: dateForAnalysis,
+          totalPairs: data.pairs?.length || 0,
+          totalMatches: data.total_matches || 0,
+          triggersFound: totalTriggers,
+          aiProvider: aiProvider,
+          fullData: data
+        });
+        console.log('✅ H2H анализ по дате сохранён в историю');
+      } catch (historyErr) {
+        console.error('⚠️ Ошибка сохранения в историю:', historyErr);
+      }
     } catch (err: any) {
       setError(err.message || 'Ошибка анализа');
     } finally {
@@ -546,6 +618,16 @@ const player2Triggers = h2hStats.player2.triggers.map(t => ({
 
       {h2hStats && (
         <div className="h2h-results">
+          <div className="h2h-results-header">
+            <h2>Результаты анализа</h2>
+            <button 
+              className="export-excel-btn"
+              onClick={() => exportH2HToExcel(h2hStats)}
+              title="Экспорт в Excel"
+            >
+              <i className="bi bi-file-earmark-excel"></i> Excel
+            </button>
+          </div>
           <div className="h2h-summary">
             <div className="player-card">
               <h3>Игрок 1</h3>
@@ -715,8 +797,17 @@ const player2Triggers = h2hStats.player2.triggers.map(t => ({
       {dateAnalysis && (
         <div className="date-analysis-results">
           <div className="date-header">
-            <h2>Матчи на {new Date(dateAnalysis.date).toLocaleDateString('ru-RU')}</h2>
-            <p>Всего матчей: {dateAnalysis.total_matches}</p>
+            <div className="date-header-left">
+              <h2>Матчи на {new Date(dateAnalysis.date).toLocaleDateString('ru-RU')}</h2>
+              <p>Всего матчей: {dateAnalysis.total_matches}</p>
+            </div>
+            <button 
+              className="export-excel-btn"
+              onClick={() => exportDateAnalysisToExcel(dateAnalysis)}
+              title="Экспорт в Excel"
+            >
+              <i className="bi bi-file-earmark-excel"></i> Excel
+            </button>
           </div>
 
           {dateAnalysis.pairs.length === 0 ? (

@@ -74,6 +74,12 @@
   margin-bottom: 16px;
 }
 
+.scenario-analysis-error .outdated-hint {
+  color: #888888;
+  font-size: 14px;
+  margin-top: 8px;
+}
+
 .scenario-analysis-error button {
   padding: 8px 20px;
   background: #ff6b35;

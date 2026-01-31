@@ -380,4 +380,71 @@
     align-items: flex-start;
     gap: 15px;
   }
+
+  .history-tabs {
+    flex-direction: column;
+  }
+}
+
+/* Вкладки */
+.history-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.tab-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary, #aaa);
+  padding: 12px 24px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  transition: all 0.3s;
+}
+
+.tab-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.tab-btn.active {
+  background: linear-gradient(135deg, rgba(33, 150, 243, 0.2), rgba(33, 150, 243, 0.1));
+  border-color: #2196f3;
+  color: #2196f3;
+}
+
+.tab-btn i {
+  font-size: 1.1rem;
+}
+
+/* H2H карточки */
+.history-card.h2h-card {
+  border-left: 3px solid #9c27b0;
+}
+
+.history-icon.h2h-icon {
+  background: linear-gradient(135deg, rgba(156, 39, 176, 0.2), rgba(156, 39, 176, 0.1));
+}
+
+.history-icon.h2h-icon i {
+  color: #9c27b0;
+}
+
+.h2h-type-badge {
+  background: rgba(156, 39, 176, 0.2);
+  color: #ce93d8;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  margin-left: auto;
+}
+
+.h2h-type-badge.date-badge {
+  background: rgba(255, 152, 0, 0.2);
+  color: #ffb74d;
 }

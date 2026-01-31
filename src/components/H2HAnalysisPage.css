@@ -166,6 +166,45 @@
   gap: 30px;
 }
 
+.h2h-results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.h2h-results-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.export-excel-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #1d6f42 0%, #28a745 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+}
+
+.export-excel-btn:hover {
+  background: linear-gradient(135deg, #28a745 0%, #34ce57 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
+}
+
+.export-excel-btn i {
+  font-size: 16px;
+}
+
 .h2h-summary {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -431,6 +470,15 @@
   padding: 25px;
   border-radius: 12px;
   border: 1px solid var(--border-primary);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.date-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .date-header h2 {

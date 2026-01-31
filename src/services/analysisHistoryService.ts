@@ -21,17 +21,24 @@ export interface AnalysisHistory {
 
 const DB_NAME = 'SportAnalyticsDB';
 const STORE_NAME = 'analysisHistory';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Версия 2 для поддержки H2H store
 const MAX_HISTORY_ITEMS = 50; // Максимум 50 записей истории
 
 class AnalysisHistoryService {
   private db: IDBDatabase | null = null;
+  private initPromise: Promise<void> | null = null;
 
   /**
-   * Инициализация базы данных
+   * Инициализация базы данных (с кэшированием промиса)
    */
   async init(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    // Если уже инициализирована
+    if (this.db) return;
+    
+    // Если инициализация уже запущена - ждём её
+    if (this.initPromise) return this.initPromise;
+    
+    this.initPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
       request.onerror = () => {
@@ -41,7 +48,7 @@ class AnalysisHistoryService {
 
       request.onsuccess = () => {
         this.db = request.result;
-        console.log('✅ IndexedDB initialized');
+        this.initPromise = null;
         resolve();
       };
 
@@ -53,7 +60,13 @@ class AnalysisHistoryService {
           const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
           objectStore.createIndex('timestamp', 'timestamp', { unique: false });
           objectStore.createIndex('periodStart', 'periodStart', { unique: false });
-          console.log('✅ Object store created');
+        }
+        
+        // H2H store для версии 2+
+        if (!db.objectStoreNames.contains('h2hAnalysisHistory')) {
+          const h2hStore = db.createObjectStore('h2hAnalysisHistory', { keyPath: 'id' });
+          h2hStore.createIndex('timestamp', 'timestamp', { unique: false });
+          h2hStore.createIndex('analysisType', 'analysisType', { unique: false });
         }
       };
     });
