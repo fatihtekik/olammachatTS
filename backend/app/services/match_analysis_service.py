@@ -479,18 +479,17 @@ class MatchAnalysisService:
             game_balance=game_balance
         )
 
-        # 9) Проверяем дубликат и сохраняем матч + сеты
+        # 9) Сохраняем матч + сеты (дубликаты уже проверены в process_excel_data)
         try:
-            if not self._match_exists(match_date, player1.id, player2.id, raw_score, data.время):
-                self.db.add(match)
-                try:
-                    self.db.flush()
-                except Exception:
-                    self.db.commit()
-                    self.db.refresh(match)
+            self.db.add(match)
+            try:
+                self.db.flush()
+            except Exception:
+                self.db.commit()
+                self.db.refresh(match)
 
-                # Сохраняем сеты с эффективностью
-                if per_set_scores:
+            # Сохраняем сеты с эффективностью
+            if per_set_scores:
                     for i, (p1_pts, p2_pts) in enumerate(per_set_scores, start=1):
                         if p1_pts > p2_pts:
                             set_winner = player1.id
@@ -532,16 +531,8 @@ class MatchAnalysisService:
                         )
                         self.db.add(match_set)
 
-                self.db.commit()
-                self.db.refresh(match)
-            else:
-                existing = self.db.query(Match).filter(
-                    Match.date == match_date,
-                    ((Match.player1_id == player1.id) & (Match.player2_id == player2.id)) | ((Match.player1_id == player2.id) & (Match.player2_id == player1.id)),
-                    Match.score == raw_score
-                ).first()
-                if existing:
-                    match = existing
+            self.db.commit()
+            self.db.refresh(match)
 
         except SQLAlchemyError as e:
             try:

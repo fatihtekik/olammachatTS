@@ -3,6 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel, create_engine, Session
 import logging
+from pathlib import Path
 
 # Импортируем все модели для создания таблиц
 from app.models.user import User
@@ -14,8 +15,10 @@ from app.models.match import (
     ScenarioStats, MatchScenario
 )
 
-# Упрощенная версия - используем SQLite напрямую
-SQLALCHEMY_DATABASE_URL = "sqlite:///./ollamachat.db"
+# Определяем абсолютный путь к БД в папке backend
+BACKEND_DIR = Path(__file__).parent.parent.parent  # backend/
+DB_PATH = BACKEND_DIR / "ollamachat.db"
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 # Создание движка SQLAlchemy
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})

@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlmodel import SQLModel
-from app.database.db import SQLALCHEMY_DATABASE_URL, engine
+from app.database.db import SQLALCHEMY_DATABASE_URL, engine, DB_PATH
 
 # Импортируем ВСЕ модели для создания таблиц
 from app.models.user import User
@@ -21,8 +21,6 @@ from app.models.match import (
     PlayerRatingHistory, Holiday, TriggerConfiguration,
     ScenarioStats, MatchScenario
 )
-
-DB_PATH = Path(__file__).parent.parent / "ollamachat.db"
 
 
 def print_header(title: str):
