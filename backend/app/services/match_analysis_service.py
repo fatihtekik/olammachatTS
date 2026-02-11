@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any, Set
 from datetime import datetime, date, time, timedelta
+import asyncio
 import re
 import os
 import httpx
@@ -47,6 +48,13 @@ class MatchAnalysisService:
         self._ai_analysis_enabled = True  # Флаг для включения/выключения ИИ
         self._selected_model = None  # Выбранная модель
         self._max_tokens = 2000  # Лимит токенов
+
+        # === КЕШИ для предзагрузки (заполняются в analyze_triggers) ===
+        self._players_cache: Dict[Any, Player] = {}       # player_id -> Player
+        self._matches_cache: List[Match] = []              # все матчи за период
+        self._matches_by_player: Dict[Any, List[Match]] = {}  # player_id -> [Match]
+        self._sets_by_match: Dict[Any, List[MatchSet]] = {}   # match_id -> [MatchSet] (отсортированные)
+        self._holidays_cache: List[Holiday] = []           # все праздники
 
         self.trigger_methods = {
             "top_performers": self._analyze_top_performers, 
@@ -689,17 +697,53 @@ class MatchAnalysisService:
                     triggers=[]
                 )
 
-            # Загружаем все матчи периода (одним запросом!)
-            all_matches = self.db.query(Match).filter(
+            # ====================================================================
+            # 🚀 ПРЕДЗАГРУЗКА ВСЕХ ДАННЫХ ОДНИМИ ЗАПРОСАМИ (вместо N+1)
+            # ====================================================================
+            print(f"🚀 Предзагрузка данных...")
+            
+            # 1) Все игроки — один запрос вместо сотен отдельных
+            all_players = self.db.query(Player).all()
+            self._players_cache = {p.id: p for p in all_players}
+            print(f"   ✅ Игроки в кеше: {len(self._players_cache)}")
+            
+            # 2) Все матчи за период — один запрос
+            self._matches_cache = self.db.query(Match).filter(
                 and_(Match.date >= start_date, Match.date <= end_date)
-            ).all()
-            print(f"⚽ Загружено матчей за период: {len(all_matches)}")
-
-            # Группируем матчи по игрокам
-            matches_by_player = {}
-            for match in all_matches:
+            ).order_by(Match.date.desc()).all()
+            print(f"   ✅ Матчи за период: {len(self._matches_cache)}")
+            
+            # 3) Группируем матчи по игрокам — без запросов к БД
+            self._matches_by_player = {}
+            for match in self._matches_cache:
                 for pid in [match.player1_id, match.player2_id]:
-                    matches_by_player.setdefault(pid, []).append(match)
+                    self._matches_by_player.setdefault(pid, []).append(match)
+            
+            # 4) Все сеты за период — ОДИН запрос вместо запроса на каждый матч
+            match_ids = [m.id for m in self._matches_cache]
+            if match_ids:
+                all_sets = self.db.query(MatchSet).filter(
+                    MatchSet.match_id.in_(match_ids)
+                ).order_by(MatchSet.match_id, MatchSet.set_number).all()
+            else:
+                all_sets = []
+            
+            self._sets_by_match = {}
+            for s in all_sets:
+                self._sets_by_match.setdefault(s.match_id, []).append(s)
+            print(f"   ✅ Сеты в кеше: {len(all_sets)} (для {len(self._sets_by_match)} матчей)")
+            
+            # 5) Все праздники — один запрос
+            self._holidays_cache = self.db.query(Holiday).filter(
+                and_(
+                    Holiday.end_date >= start_date - timedelta(days=30),
+                    Holiday.start_date <= end_date + timedelta(days=10)
+                )
+            ).all()
+            print(f"   ✅ Праздники в кеше: {len(self._holidays_cache)}")
+            
+            print(f"🚀 Предзагрузка завершена!")
+            # ====================================================================
 
             total_triggers = 0
             all_triggers = []
@@ -710,7 +754,7 @@ class MatchAnalysisService:
 
             # Идём по игрокам
             for player in players:
-                player_matches = matches_by_player.get(player.id, [])
+                player_matches = self._matches_by_player.get(player.id, [])
                 print(f"\n🔎 Игрок {player.full_name} ({player.id}), матчей: {len(player_matches)}")
 
                 for trigger_type in trigger_types:
@@ -721,8 +765,8 @@ class MatchAnalysisService:
                         all_triggers.extend(triggers)
                         total_triggers += len(triggers)
 
-            # Собираем статистику
-            total_matches = len(all_matches)
+            # Собираем статистику — используем уже загруженные данные
+            total_matches = len(self._matches_cache)
             top_performers = await self._get_top_performers(start_date, end_date)
             problem_players = await self._get_problem_players(start_date, end_date)
             
@@ -754,52 +798,39 @@ class MatchAnalysisService:
         ).count()
     
     async def _get_top_performers(self, start_date: date, end_date: date) -> List[dict]:
-        """Получает топ игроков по результативности"""
-        # Получаем игроков с высоким win rate за период
+        """Получает топ игроков по результативности (оптимизировано — 0 запросов к БД)"""
         top_performers = []
-        
-        players = self.db.query(Player).all()
         player_stats = []
         
-        for player in players:
-            matches = self.db.query(Match).filter(
-                and_(
-                    Match.date >= start_date,
-                    Match.date <= end_date,
-                    or_(Match.player1_id == player.id, Match.player2_id == player.id)
-                )
-            ).all()
+        # Используем кеш вместо db.query(Player).all()
+        for player_id, player in self._players_cache.items():
+            # Используем кеш вместо db.query(Match) для каждого игрока
+            matches = self._matches_by_player.get(player_id, [])
             
-            if len(matches) >= 3:  # Минимум 3 матча для статистики
+            if len(matches) >= 3:
                 wins = len([m for m in matches if m.winner_id == player.id])
                 win_rate = (wins / len(matches)) * 100
                 
-                if win_rate >= 70:  # Топ игроки с win rate >= 70%
+                if win_rate >= 70:
                     player_stats.append({
                         'player': player,
                         'win_rate': win_rate,
                         'matches': len(matches),
-                        'wins': wins
+                        'wins': wins,
+                        'all_matches': matches  # сохраняем чтобы не запрашивать повторно
                     })
         
-        # Сортируем по win_rate и берем топ 10
         player_stats.sort(key=lambda x: x['win_rate'], reverse=True)
         
         for idx, stat in enumerate(player_stats[:10]):
-            # Подсчитываем дополнительную статистику
             losses = stat['matches'] - stat['wins']
             sets_won = 0
             sets_lost = 0
             recent_form = []
             
-            # Получаем последние 5 матчей для формы
-            recent_matches = self.db.query(Match).filter(
-                and_(
-                    Match.date >= start_date,
-                    Match.date <= end_date,
-                    or_(Match.player1_id == stat['player'].id, Match.player2_id == stat['player'].id)
-                )
-            ).order_by(Match.date.desc()).limit(5).all()
+            # Берём из уже загруженных матчей, сортируем по дате desc
+            sorted_matches = sorted(stat['all_matches'], key=lambda m: m.date, reverse=True)
+            recent_matches = sorted_matches[:5]
             
             for match in recent_matches:
                 if match.winner_id == stat['player'].id:
@@ -807,7 +838,6 @@ class MatchAnalysisService:
                 else:
                     recent_form.append('L')
                 
-                # Подсчет сетов
                 if match.player1_id == stat['player'].id:
                     sets_won += match.sets_player1 or 0
                     sets_lost += match.sets_player2 or 0
@@ -836,71 +866,67 @@ class MatchAnalysisService:
         return top_performers
     
     async def _get_problem_players(self, start_date: date, end_date: date) -> List[dict]:
-        """Получает игроков с проблемами"""
+        """Получает игроков с проблемами (оптимизировано — 1 запрос вместо N*3)"""
         problem_players = []
-        
-        players = self.db.query(Player).all()
         player_stats = []
         
-        for player in players:
-            matches = self.db.query(Match).filter(
-                and_(
-                    Match.date >= start_date,
-                    Match.date <= end_date,
-                    or_(Match.player1_id == player.id, Match.player2_id == player.id)
-                )
-            ).all()
+        # Используем кеш вместо db.query(Player).all()
+        for player_id, player in self._players_cache.items():
+            # Используем кеш вместо db.query(Match) для каждого игрока
+            matches = self._matches_by_player.get(player_id, [])
             
-            if len(matches) >= 3:  # Минимум 3 матча
+            if len(matches) >= 3:
                 wins = len([m for m in matches if m.winner_id == player.id])
                 losses = len([m for m in matches if m.winner_id and m.winner_id != player.id])
                 loss_rate = (losses / len(matches)) * 100
                 
-                if loss_rate >= 60:  # Проблемные игроки с loss rate >= 60%
+                if loss_rate >= 60:
                     player_stats.append({
                         'player': player,
                         'loss_rate': loss_rate,
                         'matches': len(matches),
                         'wins': wins,
-                        'losses': losses
+                        'losses': losses,
+                        'all_matches': matches
                     })
         
-        # Сортируем по loss_rate (по убыванию - самые проблемные сначала)
         player_stats.sort(key=lambda x: x['loss_rate'], reverse=True)
         
+        # Один запрос на все триггеры вместо N отдельных count()
+        trigger_counts = {}
+        trigger_rows = self.db.query(
+            PlayerTrigger.player_id, func.count(PlayerTrigger.id)
+        ).filter(
+            and_(
+                PlayerTrigger.period_start == start_date,
+                PlayerTrigger.period_end == end_date
+            )
+        ).group_by(PlayerTrigger.player_id).all()
+        for pid, cnt in trigger_rows:
+            trigger_counts[pid] = cnt
+        
         for idx, stat in enumerate(player_stats[:10]):
-            # Подсчитываем дополнительную статистику
             sets_won = 0
             sets_lost = 0
             recent_form = []
-            losing_streak = 0
             current_streak = 0
             
-            # Получаем все матчи игрока для анализа
-            all_matches = self.db.query(Match).filter(
-                and_(
-                    Match.date >= start_date,
-                    Match.date <= end_date,
-                    or_(Match.player1_id == stat['player'].id, Match.player2_id == stat['player'].id)
-                )
-            ).order_by(Match.date.desc()).all()
+            # Сортируем из кеша вместо отдельного запроса
+            sorted_matches = sorted(stat['all_matches'], key=lambda m: m.date, reverse=True)
             
-            # Анализируем форму и серии поражений
-            for match in all_matches[:5]:  # Последние 5 матчей для формы
+            for match in sorted_matches[:5]:
                 if match.winner_id == stat['player'].id:
                     recent_form.append('W')
                 else:
                     recent_form.append('L')
             
-            # Подсчет текущей серии поражений
-            for match in all_matches:
+            for match in sorted_matches:
                 if match.winner_id != stat['player'].id:
                     current_streak += 1
                 else:
                     break
             
-            # Подсчет сетов
-            for match in all_matches:
+            for match in sorted_matches:
                 if match.player1_id == stat['player'].id:
                     sets_won += match.sets_player1 or 0
                     sets_lost += match.sets_player2 or 0
@@ -908,14 +934,8 @@ class MatchAnalysisService:
                     sets_won += match.sets_player2 or 0
                     sets_lost += match.sets_player1 or 0
             
-            # Подсчет количества триггеров для этого игрока
-            triggers_count = self.db.query(PlayerTrigger).filter(
-                and_(
-                    PlayerTrigger.player_id == stat['player'].id,
-                    PlayerTrigger.period_start == start_date,
-                    PlayerTrigger.period_end == end_date
-                )
-            ).count()
+            # Используем предзагруженные trigger_counts
+            triggers_count = trigger_counts.get(stat['player'].id, 0)
             
             player_dict = {
                 'id': stat['player'].id,
@@ -942,8 +962,9 @@ class MatchAnalysisService:
     
     async def _get_all_triggers(self, start_date: date, end_date: date, provider: str = "lmstudio") -> List[dict]:
         """
-        Получает все триггеры за период.
-        Генерирует персональный ИИ-анализ **один раз на игрока**, объединяя все триггеры (лимит 8).
+        Получает все триггеры за период (оптимизировано — 1 запрос вместо N*3).
+        Генерирует персональный ИИ-анализ **параллельно** (до 3 одновременно),
+        один раз на игрока, объединяя все триггеры (лимит 8).
         """
         # Получаем все триггеры за период
         triggers = self.db.query(PlayerTrigger).join(Player).filter(
@@ -958,37 +979,112 @@ class MatchAnalysisService:
         for trigger in triggers:
             players_triggers.setdefault(trigger.player_id, []).append(trigger)
 
+        # ====================================================================
+        # 🚀 ПАРАЛЛЕЛЬНЫЙ AI-АНАЛИЗ (до 3 одновременных запросов)
+        # ====================================================================
+        # 1) Подготавливаем данные для каждого игрока (без AI — мгновенно)
+        player_data: Dict[Any, dict] = {}  # player_id -> {player, stats, trigger_text}
+        for player_id, player_triggers in players_triggers.items():
+            player = self._players_cache.get(player_id)
+            player_stats = self._get_player_stats_for_trigger(player_id, start_date, end_date) or {}
+            limited_triggers = player_triggers[:8]
+            trigger_values_combined = "\n".join([t.trigger_value for t in limited_triggers])
+            player_data[player_id] = {
+                "player": player,
+                "player_stats": player_stats,
+                "trigger_text": trigger_values_combined,
+            }
+
+        # 2) Запускаем все AI-запросы параллельно с ограничением concurrency
+        # Для LMStudio оптимально 1-2 одновременных запроса (модель тяжелая)
+        ai_semaphore = asyncio.Semaphore(2)  # максимум 2 одновременных запроса к LLM
+
+        async def _ai_task(pid: Any) -> tuple:
+            """Обёртка для одного AI-запроса с семафором и retry логикой"""
+            async with ai_semaphore:
+                data = player_data[pid]
+                player = data["player"]
+                player_name = player.full_name if player else "Неизвестный игрок"
+                print(f"🤖 [PARALLEL] Запуск AI для {player_name}...")
+                
+                # Retry логика: до 2 попыток
+                for attempt in range(2):
+                    try:
+                        ai_text = await self._generate_ai_analysis(
+                            player_name,
+                            data["trigger_text"],
+                            data["player_stats"],
+                            provider=provider
+                        )
+                        
+                        # Проверяем, не таймаут ли это
+                        if ai_text and "Таймаут" not in ai_text:
+                            print(f"✅ [PARALLEL] AI для {player_name} завершён ({len(ai_text or '')} символов)")
+                            return pid, ai_text
+                        elif attempt == 0:
+                            print(f"⚠️ [RETRY] Таймаут для {player_name}, повтор...")
+                            await asyncio.sleep(2)  # Пауза перед повтором
+                            continue
+                        else:
+                            return pid, ai_text  # Последняя попытка, возвращаем даже с ошибкой
+                    except Exception as e:
+                        if attempt == 0:
+                            print(f"⚠️ [RETRY] Ошибка для {player_name}: {e}, повтор...")
+                            await asyncio.sleep(2)
+                            continue
+                        else:
+                            print(f"❌ [FAILED] AI для {player_name} не удался: {e}")
+                            return pid, f"Ошибка AI: {str(e)}"
+                
+                return pid, None
+
+        # Запускаем ВСЕ задачи параллельно (семафор ограничит до 2 одновременных)
+        player_ids_to_analyze = list(players_triggers.keys())
+        print(f"\n🚀 Запуск параллельного AI-анализа для {len(player_ids_to_analyze)} игроков...")
+        print(f"⚙️ Режим: максимум 2 запроса одновременно (баланс скорости и стабильности)")
+        print(f"⏱️ Ожидаемое время: ~{len(player_ids_to_analyze)} минут")
+
+        if self._ai_analysis_enabled and player_ids_to_analyze:
+            ai_tasks = [_ai_task(pid) for pid in player_ids_to_analyze]
+            ai_results_list = await asyncio.gather(*ai_tasks, return_exceptions=True)
+
+            # Собираем результаты в словарь
+            ai_results: Dict[Any, str] = {}
+            for item in ai_results_list:
+                if isinstance(item, Exception):
+                    logger.error(f"💥 Ошибка AI-анализа: {item}")
+                    continue
+                pid, ai_text = item
+                ai_results[pid] = ai_text
+
+            print(f"✅ Параллельный AI-анализ завершён: {len(ai_results)}/{len(player_ids_to_analyze)} успешно (max 2 одновременно)")
+        else:
+            ai_results = {}
+            if not self._ai_analysis_enabled:
+                print(f"⚠️ AI-анализ отключен, пропускаем")
+
+        # ====================================================================
+        # 3) Собираем итоговый результат (мгновенно — все данные уже есть)
+        # ====================================================================
         result = []
 
         for player_id, player_triggers in players_triggers.items():
-            player = self.db.query(Player).filter(Player.id == player_id).first()
-            player_stats = self._get_player_stats_for_trigger(player_id, start_date, end_date) or {}
+            data = player_data[player_id]
+            player = data["player"]
+            player_stats = data["player_stats"]
+            ai_text = ai_results.get(player_id)  # уже готовый AI-текст
 
-            # Генерируем ИИ-анализ один раз на игрока, объединяя первые 8 триггеров
-            limited_triggers = player_triggers[:8]
-            trigger_values_combined = "\n".join([t.trigger_value for t in limited_triggers])
-            ai_text = await self._generate_ai_analysis(
-                player.full_name if player else "Неизвестный игрок",
-                trigger_values_combined,
-                player_stats,
-                provider=provider  # Передаём провайдер
-            )
+            # Матчи игрока из кеша
+            player_matches = self._matches_by_player.get(player_id, [])
+            player_matches_sorted = sorted(player_matches, key=lambda m: m.date, reverse=True)
 
-            # Добавляем каждый триггер в результат, но AI-анализ общий для игрока
             for trigger in player_triggers:
-                # Извлекаем доказательства для конкретного триггера
                 trigger_evidence = self._extract_trigger_evidence(
-                    player, 
+                    player,
                     trigger.trigger_type,
-                    self.db.query(Match).filter(
-                        and_(
-                            Match.date >= start_date,
-                            Match.date <= end_date,
-                            or_(Match.player1_id == player.id, Match.player2_id == player.id)
-                        )
-                    ).order_by(Match.date.desc()).all()
+                    player_matches_sorted
                 )
-                
+
                 trigger_dict = {
                     "id": trigger.id,
                     "player_id": trigger.player_id,
@@ -1006,7 +1102,7 @@ class MatchAnalysisService:
                     "created_at": trigger.created_at,
                     "player_stats": player_stats if player_stats else None,
                     "ai_analysis": ai_text,  # один AI-анализ на игрока
-                    "evidence": trigger_evidence  # НОВОЕ: доказательства триггера
+                    "evidence": trigger_evidence  # доказательства триггера
                 }
                 result.append(trigger_dict)
 
@@ -1170,8 +1266,8 @@ class MatchAnalysisService:
 
         triggers: List[PlayerTrigger] = []
 
-        # 1) Выбираем праздники, которые **пересекают** расширенный период анализа
-        holidays = self.db.query(Holiday).filter(
+        # 1) Используем кеш праздников вместо db.query(Holiday)
+        holidays = self._holidays_cache if self._holidays_cache else self.db.query(Holiday).filter(
             and_(
                 Holiday.end_date >= start_date - timedelta(days=30),
                 Holiday.start_date <= end_date + timedelta(days=10)
@@ -1334,9 +1430,9 @@ class MatchAnalysisService:
 
                     for m in period_matches:
                         if m.winner_id != player.id:  # поражение
-                            # --- Определяем соперника
+                            # --- Определяем соперника из кеша
                             opponent_id = m.player1_id if m.player2_id == player.id else m.player2_id
-                            opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+                            opponent = self._players_cache.get(opponent_id)
 
                             # --- Базовый вес поражения
                             loss_weight = 1
@@ -1711,10 +1807,8 @@ class MatchAnalysisService:
                 opp_sets = match.sets_player2 if is_p1 else match.sets_player1
 
                 if player_sets == 2 and opp_sets == 3:
-                    sets = sorted(
-                        self.db.query(MatchSet).filter(MatchSet.match_id == match.id).all(),
-                        key=lambda s: s.set_number
-                    )
+                    # Из кеша вместо db.query(MatchSet)
+                    sets = self._sets_by_match.get(match.id, [])
                     if len(sets) >= 3 and sets[0].winner_id == player.id and sets[1].winner_id == player.id:
                         collapse_count += 1
                         collapse_match_ids.append(match.id)
@@ -1846,8 +1940,8 @@ class MatchAnalysisService:
         total_losses = len(losing_matches)
 
         for match in losing_matches:
-            # Получаем сеты этого матча из таблицы MatchSet, отсортированные по set_number
-            match_sets = self.db.query(MatchSet).filter(MatchSet.match_id == match.id).order_by(MatchSet.set_number).all()
+            # Из кеша вместо db.query(MatchSet)
+            match_sets = self._sets_by_match.get(match.id, [])
 
             if not match_sets:
                 continue  # если нет информации по сетам, пропускаем
@@ -1904,21 +1998,40 @@ class MatchAnalysisService:
         led_2_lost_count = 0
         total_matches = len(player_matches)
 
+        led_2_match_ids = []  # ID матчей для метаданных
+
         for match in player_matches:
-            # Получаем сеты матча
-            match_sets = self.db.query(MatchSet).filter(MatchSet.match_id == match.id).order_by(MatchSet.set_number).all()
-            if len(match_sets) < 2:
-                continue  # если меньше двух сетов, пропускаем
+            # Из кеша вместо db.query(MatchSet)
+            match_sets = self._sets_by_match.get(match.id, [])
+            if len(match_sets) < 3:
+                continue  # нужно минимум 3 сета (2 выигранных + хотя бы 1 проигранный)
 
-            # Проверяем первые два сета
-            first_two_wins = 0
-            for s in match_sets[:2]:
-                if s.winner_id == player.id:
-                    first_two_wins += 1
+            # Строим словарь сетов по номеру для надёжности
+            sets_by_number = {s.set_number: s for s in match_sets}
 
-            # Если первые два сета выиграны, а матч проигран
-            if first_two_wins == 2:
-                led_2_lost_count += 1
+            set1 = sets_by_number.get(1)
+            set2 = sets_by_number.get(2)
+
+            if not set1 or not set2:
+                continue
+
+            # Проверяем что игрок выиграл ИМЕННО 1-й И 2-й сет
+            won_set_1 = (set1.winner_id == player.id)
+            won_set_2 = (set2.winner_id == player.id)
+
+            if won_set_1 and won_set_2:
+                # Дополнительно проверяем: после 2:0 по сетам проиграл матч
+                # Считаем сеты после 2-го
+                remaining_sets_lost = sum(
+                    1 for s in match_sets if s.set_number > 2 and s.winner_id and s.winner_id != player.id
+                )
+                if remaining_sets_lost >= 2:  # Проиграл минимум 2 из оставшихся (т.е. соперник отыграл 2+)
+                    led_2_lost_count += 1
+                    led_2_match_ids.append(str(match.id))
+                    is_p1 = match.player1_id == player.id
+                    opp = self._players_cache.get(match.player2_id if is_p1 else match.player1_id)
+                    opp_name = opp.full_name if opp else '?'
+                    print(f"      🔴 led_2_sets_lost_match: {player.full_name} вёл 2:0, проиграл vs {opp_name} (матч {match.id}, {match.date})")
 
         if led_2_lost_count >= 2:
             percentage = (led_2_lost_count / total_matches) * 100 if total_matches > 0 else 0
@@ -1939,6 +2052,7 @@ class MatchAnalysisService:
                 "led_2_lost_count": led_2_lost_count,
                 "total_matches": total_matches,
                 "percentage": percentage,
+                "match_ids": led_2_match_ids,
                 "recommendation": "Критические проблемы с психологической устойчивостью при большом преимуществе"
             })
 
@@ -1960,8 +2074,8 @@ class MatchAnalysisService:
             if not (start_date <= match.date <= end_date):
                 continue
 
-            # Получаем все сеты матча
-            match_sets = self.db.query(MatchSet).filter(MatchSet.match_id == match.id).order_by(MatchSet.set_number).all()
+            # Из кеша вместо db.query(MatchSet)
+            match_sets = self._sets_by_match.get(match.id, [])
             if not match_sets:
                 continue
 
@@ -2030,8 +2144,8 @@ class MatchAnalysisService:
         successful_comebacks = 0
 
         for match in matches:
-            # Получаем сеты для текущего матча, сортируем по порядку
-            sets = self.db.query(MatchSet).filter(MatchSet.match_id == match.id).order_by(MatchSet.set_number).all()
+            # Из кеша вместо db.query(MatchSet)
+            sets = self._sets_by_match.get(match.id, [])
             if not sets:
                 continue
 
@@ -2112,9 +2226,9 @@ class MatchAnalysisService:
 
         for m in pressure_matches:
             if m.winner_id != player.id:
-                # Определяем соперника
+                # Определяем соперника из кеша
                 opponent_id = m.player1_id if m.player2_id == player.id else m.player2_id
-                opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+                opponent = self._players_cache.get(opponent_id)
 
                 # Базовый вес поражения
                 loss_weight = 1
@@ -2179,7 +2293,8 @@ class MatchAnalysisService:
         
     def _log_trigger_with_specific_matches(self, trigger: PlayerTrigger, trigger_count: int, total_triggers: int):
         """Логирует детали найденного триггера с конкретными матчами, где проявился триггер"""
-        player = self.db.query(Player).filter(Player.id == trigger.player_id).first()
+        # Из кеша вместо db.query(Player)
+        player = self._players_cache.get(trigger.player_id)
         if not player:
             logger.warning(f"Игрок с ID {trigger.player_id} не найден")
             return
@@ -2204,7 +2319,8 @@ class MatchAnalysisService:
             lines.append(f"    • Список матчей:")
             for idx, match in enumerate(matches, 1):
                 opp_id = match.player2_id if match.player1_id == player.id else match.player1_id
-                opponent = self.db.query(Player).filter(Player.id == opp_id).first()
+                # Из кеша вместо db.query(Player)
+                opponent = self._players_cache.get(opp_id)
                 opp_name = opponent.full_name if opponent else "Неизвестный игрок"
                 result = 'W' if match.winner_id == player.id else 'L'
                 time_str = match.time.strftime("%H:%M") if match.time else "н/д"
@@ -2217,15 +2333,14 @@ class MatchAnalysisService:
         logger.info(f"Trigger details written to {file_path}")
     
     def _get_trigger_specific_matches(self, player: Player, trigger: PlayerTrigger) -> List[Match]:
-        """Получает конкретные матчи, где проявился данный триггер"""
-        # Базовый запрос для получения матчей игрока за период триггера
-        base_matches = self.db.query(Match).filter(
-            and_(
-                Match.date >= trigger.period_start,
-                Match.date <= trigger.period_end,
-                or_(Match.player1_id == player.id, Match.player2_id == player.id)
-            )
-        ).order_by(Match.date.desc()).all()
+        """Получает конкретные матчи, где проявился данный триггер (оптимизировано)"""
+        # Из кеша вместо db.query(Match)
+        all_player_matches = self._matches_by_player.get(player.id, [])
+        base_matches = sorted(
+            [m for m in all_player_matches 
+             if trigger.period_start <= m.date <= trigger.period_end],
+            key=lambda m: m.date, reverse=True
+        )
         
         # Фильтруем матчи в зависимости от типа триггера
         trigger_matches = []
@@ -2317,7 +2432,8 @@ class MatchAnalysisService:
         
         for match in matches:
             opponent_id = match.player2_id if match.player1_id == player.id else match.player1_id
-            opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+            # Из кеша вместо db.query(Player)
+            opponent = self._players_cache.get(opponent_id)
             
             if not opponent or not opponent.current_rating or not player.current_rating:
                 continue
@@ -2449,7 +2565,8 @@ class MatchAnalysisService:
         
         for match in matches:
             opponent_id = match.player2_id if match.player1_id == player.id else match.player1_id
-            opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+            # Из кеша вместо db.query(Player)
+            opponent = self._players_cache.get(opponent_id)
             
             if not opponent or not opponent.current_rating or not player.current_rating:
                 continue
@@ -2480,115 +2597,100 @@ class MatchAnalysisService:
     def _extract_trigger_evidence(self, player: Player, trigger_type: str, matches: List[Match]) -> List[Dict]:
         """
         Извлекает конкретные матчи-доказательства для триггера.
-        Возвращает список матчей с подсветкой ключевых моментов и детальной информацией о сетах.
+        Оптимизировано: использует self._players_cache и self._sets_by_match (0 запросов к БД).
         """
         evidence = []
         
+        def _get_opponent(match, is_player1):
+            """Helper: получаем соперника из кеша"""
+            opponent_id = match.player2_id if is_player1 else match.player1_id
+            return self._players_cache.get(opponent_id)
+        
+        def _get_sets_details(match_id, is_player1):
+            """Helper: получаем детали сетов из кеша"""
+            match_sets = self._sets_by_match.get(match_id, [])
+            details = []
+            for set_data in match_sets:
+                player_points = set_data.player1_points if is_player1 else set_data.player2_points
+                opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
+                won_set = set_data.winner_id == player.id
+                details.append({
+                    'set_number': set_data.set_number,
+                    'player_points': player_points,
+                    'opponent_points': opponent_points,
+                    'won': won_set
+                })
+            return details
+        
+        def _build_evidence_entry(match, is_player1, highlight):
+            """Helper: собираем evidence запись без запросов к БД"""
+            opponent = _get_opponent(match, is_player1)
+            player_sets = match.sets_player1 if is_player1 else match.sets_player2
+            opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+            rating_diff = (player.current_rating or 0) - (opponent.current_rating or 0) if opponent and opponent.current_rating else 0
+            
+            return {
+                'date': match.date.strftime('%d.%m.%Y'),
+                'time': match.time.strftime('%H:%M') if match.time else None,
+                'opponent': opponent.full_name if opponent else 'Неизвестный',
+                'opponent_rating': opponent.current_rating if opponent else None,
+                'score': f"{player_sets}:{opponent_sets}",
+                'sets': _get_sets_details(match.id, is_player1),
+                'highlight': highlight,
+                'serve_efficiency': match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2,
+                'receive_efficiency': match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2,
+                'was_favorite': rating_diff > 0,
+                'rating_diff': rating_diff,
+                'red_flags': self._identify_match_red_flags(match, player, is_player1)
+            }
+        
         if trigger_type in ['led_2_sets_lost_match', 'won_2_lost_3rd_set', 'led_2_sets_lost']:
-            # ТРИГГЕР: Вел 2:0 по сетам, но ПРОИГРАЛ МАТЧ 2:3
             for match in matches:
-                is_player1 = match.player1_id == player.id
-                player_sets = match.sets_player1 if is_player1 else match.sets_player2
-                opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+                if match.winner_id == player.id:
+                    continue  # Интересуют только проигранные матчи
                 
-                if player_sets == 2 and opponent_sets == 3:
-                    opponent_id = match.player2_id if is_player1 else match.player1_id
-                    opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
-                    
-                    serve_eff = match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2
-                    receive_eff = match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2
-                    was_favorite = player.current_rating > opponent.current_rating if opponent else False
-                    rating_diff = player.current_rating - opponent.current_rating if opponent else 0
-                    
-                    match_sets = self.db.query(MatchSet).filter(
-                        MatchSet.match_id == match.id
-                    ).order_by(MatchSet.set_number).all()
-                    
-                    sets_details = []
-                    for set_data in match_sets:
-                        player_points = set_data.player1_points if is_player1 else set_data.player2_points
-                        opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
-                        won_set = set_data.winner_id == player.id
-                        sets_details.append({
-                            'set_number': set_data.set_number,
-                            'player_points': player_points,
-                            'opponent_points': opponent_points,
-                            'won': won_set
-                        })
-                    
-                    evidence.append({
-                        'date': match.date.strftime('%d.%m.%Y'),
-                        'time': match.time.strftime('%H:%M') if match.time else None,
-                        'opponent': opponent.full_name if opponent else 'Неизвестный',
-                        'opponent_rating': opponent.current_rating if opponent else None,
-                        'score': f"{player_sets}:{opponent_sets}",
-                        'sets': sets_details,
-                        'highlight': 'Вел 2:0, проиграл 2:3',
-                        'serve_efficiency': serve_eff,
-                        'receive_efficiency': receive_eff,
-                        'was_favorite': was_favorite,
-                        'rating_diff': rating_diff,
-                        'red_flags': self._identify_match_red_flags(match, player, is_player1)
-                    })
+                is_player1 = match.player1_id == player.id
+                
+                # Проверяем по сетам: игрок выиграл ИМЕННО 1-й И 2-й сет
+                match_sets = self._sets_by_match.get(match.id, [])
+                if len(match_sets) < 3:
+                    continue
+                
+                sets_by_number = {s.set_number: s for s in match_sets}
+                set1 = sets_by_number.get(1)
+                set2 = sets_by_number.get(2)
+                
+                if not set1 or not set2:
+                    continue
+                
+                won_set_1 = (set1.winner_id == player.id)
+                won_set_2 = (set2.winner_id == player.id)
+                
+                if won_set_1 and won_set_2:
+                    # Проверяем что проиграл оставшиеся сеты
+                    remaining_lost = sum(1 for s in match_sets if s.set_number > 2 and s.winner_id and s.winner_id != player.id)
+                    if remaining_lost >= 2:
+                        player_sets = match.sets_player1 if is_player1 else match.sets_player2
+                        opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
+                        evidence.append(_build_evidence_entry(match, is_player1, f'Вёл 2:0 по сетам, проиграл {player_sets}:{opponent_sets}'))
         
         elif trigger_type in ['weaker_opponent_losses', 'loses_to_weaker']:
-            # ТРИГГЕР: Поражения от слабых
             for match in matches:
                 if match.winner_id == player.id:
                     continue
                     
                 is_player1 = match.player1_id == player.id
-                opponent_id = match.player2_id if is_player1 else match.player1_id
-                opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+                opponent = _get_opponent(match, is_player1)
                 
                 if not opponent or not opponent.current_rating or not player.current_rating:
                     continue
                 
                 rating_diff = player.current_rating - opponent.current_rating
                 
-                # Только если соперник слабее на 200+ рейтинга
                 if rating_diff >= 200:
-                    player_sets = match.sets_player1 if is_player1 else match.sets_player2
-                    opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
-                    
-                    serve_eff = match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2
-                    receive_eff = match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2
-                    
-                    # Загружаем сеты матча
-                    match_sets = self.db.query(MatchSet).filter(
-                        MatchSet.match_id == match.id
-                    ).order_by(MatchSet.set_number).all()
-                    
-                    # Формируем детальную информацию о сетах
-                    sets_details = []
-                    for set_data in match_sets:
-                        player_points = set_data.player1_points if is_player1 else set_data.player2_points
-                        opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
-                        won_set = set_data.winner_id == player.id
-                        sets_details.append({
-                            'set_number': set_data.set_number,
-                            'player_points': player_points,
-                            'opponent_points': opponent_points,
-                            'won': won_set
-                        })
-                    
-                    evidence.append({
-                        'date': match.date.strftime('%d.%m.%Y'),
-                        'time': match.time.strftime('%H:%M') if match.time else None,
-                        'opponent': opponent.full_name,
-                        'opponent_rating': opponent.current_rating,
-                        'score': f"{player_sets}:{opponent_sets}",
-                        'sets': sets_details,
-                        'highlight': f'Проиграл слабому (-{rating_diff} рейтинга)',
-                        'serve_efficiency': serve_eff,
-                        'receive_efficiency': receive_eff,
-                        'was_favorite': True,
-                        'rating_diff': rating_diff,
-                        'red_flags': self._identify_match_red_flags(match, player, is_player1)
-                    })
+                    evidence.append(_build_evidence_entry(match, is_player1, f'Проиграл слабому (-{rating_diff} рейтинга)'))
         
         elif trigger_type in ['defeat_0_3', 'shutout_losses']:
-            # ТРИГГЕР: Поражения 0:3
             for match in matches:
                 if match.winner_id == player.id:
                     continue
@@ -2598,155 +2700,37 @@ class MatchAnalysisService:
                 opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
                 
                 if player_sets == 0 and opponent_sets == 3:
-                    opponent_id = match.player2_id if is_player1 else match.player1_id
-                    opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
-                    
-                    rating_diff = player.current_rating - opponent.current_rating if opponent and opponent.current_rating else 0
-                    
-                    # Загружаем сеты матча
-                    match_sets = self.db.query(MatchSet).filter(
-                        MatchSet.match_id == match.id
-                    ).order_by(MatchSet.set_number).all()
-                    
-                    # Формируем детальную информацию о сетах
-                    sets_details = []
-                    for set_data in match_sets:
-                        player_points = set_data.player1_points if is_player1 else set_data.player2_points
-                        opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
-                        won_set = set_data.winner_id == player.id
-                        sets_details.append({
-                            'set_number': set_data.set_number,
-                            'player_points': player_points,
-                            'opponent_points': opponent_points,
-                            'won': won_set
-                        })
-                    
-                    evidence.append({
-                        'date': match.date.strftime('%d.%m.%Y'),
-                        'time': match.time.strftime('%H:%M') if match.time else None,
-                        'opponent': opponent.full_name if opponent else 'Неизвестный',
-                        'opponent_rating': opponent.current_rating if opponent else None,
-                        'score': f"{player_sets}:{opponent_sets}",
-                        'sets': sets_details,
-                        'highlight': 'Сухое поражение 0:3',
-                        'serve_efficiency': match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2,
-                        'receive_efficiency': match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2,
-                        'was_favorite': rating_diff > 0,
-                        'rating_diff': rating_diff,
-                        'red_flags': self._identify_match_red_flags(match, player, is_player1)
-                    })
+                    evidence.append(_build_evidence_entry(match, is_player1, 'Сухое поражение 0:3'))
         
         elif trigger_type in ['losing_streaks']:
-            # ТРИГГЕР: Проигрыши в ряд
             consecutive_losses = []
             for match in matches:
                 if match.winner_id != player.id and match.winner_id is not None:
                     consecutive_losses.append(match)
                 else:
-                    break  # Серия прервалась
+                    break
             
-            # Берем последние N поражений подряд
-            for match in consecutive_losses[:10]:  # Максимум 10
+            for match in consecutive_losses[:10]:
                 is_player1 = match.player1_id == player.id
-                opponent_id = match.player2_id if is_player1 else match.player1_id
-                opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
-                
-                player_sets = match.sets_player1 if is_player1 else match.sets_player2
-                opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
-                
-                rating_diff = player.current_rating - opponent.current_rating if opponent and opponent.current_rating else 0
-                
-                # Загружаем сеты матча
-                match_sets = self.db.query(MatchSet).filter(
-                    MatchSet.match_id == match.id
-                ).order_by(MatchSet.set_number).all()
-                
-                # Формируем детальную информацию о сетах
-                sets_details = []
-                for set_data in match_sets:
-                    player_points = set_data.player1_points if is_player1 else set_data.player2_points
-                    opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
-                    won_set = set_data.winner_id == player.id
-                    sets_details.append({
-                        'set_number': set_data.set_number,
-                        'player_points': player_points,
-                        'opponent_points': opponent_points,
-                        'won': won_set
-                    })
-                
-                evidence.append({
-                    'date': match.date.strftime('%d.%m.%Y'),
-                    'time': match.time.strftime('%H:%M') if match.time else None,
-                    'opponent': opponent.full_name if opponent else 'Неизвестный',
-                    'opponent_rating': opponent.current_rating if opponent else None,
-                    'score': f"{player_sets}:{opponent_sets}",
-                    'sets': sets_details,
-                    'highlight': f'Поражение #{len(evidence)+1} в серии',
-                    'serve_efficiency': match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2,
-                    'receive_efficiency': match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2,
-                    'was_favorite': rating_diff > 0,
-                    'rating_diff': rating_diff,
-                    'red_flags': self._identify_match_red_flags(match, player, is_player1)
-                })
+                evidence.append(_build_evidence_entry(match, is_player1, f'Поражение #{len(evidence)+1} в серии'))
         
         elif trigger_type in ['time_performance', 'night_performance']:
-            # ТРИГГЕР: Ночные матчи
             for match in matches:
                 if not match.time:
                     continue
                     
                 hour = match.time.hour
-                if hour < 22 and hour >= 6:  # Только ночные матчи
+                if hour < 22 and hour >= 6:
                     continue
                 
                 is_player1 = match.player1_id == player.id
                 won = match.winner_id == player.id
                 
-                if won:  # Показываем только поражения ночью
+                if won:
                     continue
                 
-                opponent_id = match.player2_id if is_player1 else match.player1_id
-                opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
-                
-                player_sets = match.sets_player1 if is_player1 else match.sets_player2
-                opponent_sets = match.sets_player2 if is_player1 else match.sets_player1
-                
-                # Загружаем сеты матча
-                match_sets = self.db.query(MatchSet).filter(
-                    MatchSet.match_id == match.id
-                ).order_by(MatchSet.set_number).all()
-                
-                # Формируем детальную информацию о сетах
-                sets_details = []
-                for set_data in match_sets:
-                    player_points = set_data.player1_points if is_player1 else set_data.player2_points
-                    opponent_points = set_data.player2_points if is_player1 else set_data.player1_points
-                    won_set = set_data.winner_id == player.id
-                    sets_details.append({
-                        'set_number': set_data.set_number,
-                        'player_points': player_points,
-                        'opponent_points': opponent_points,
-                        'won': won_set
-                    })
-                
-                rating_diff = player.current_rating - opponent.current_rating if opponent and opponent.current_rating else 0
-                
-                evidence.append({
-                    'date': match.date.strftime('%d.%m.%Y'),
-                    'time': match.time.strftime('%H:%M'),
-                    'opponent': opponent.full_name if opponent else 'Неизвестный',
-                    'opponent_rating': opponent.current_rating if opponent else None,
-                    'score': f"{player_sets}:{opponent_sets}",
-                    'sets': sets_details,
-                    'highlight': f'Ночной матч ({hour}:00 - подозрительное время)',
-                    'serve_efficiency': match.serve_efficiency_p1 if is_player1 else match.serve_efficiency_p2,
-                    'receive_efficiency': match.receive_efficiency_p1 if is_player1 else match.receive_efficiency_p2,
-                    'was_favorite': rating_diff > 0,
-                    'rating_diff': rating_diff,
-                    'red_flags': self._identify_match_red_flags(match, player, is_player1)
-                })
+                evidence.append(_build_evidence_entry(match, is_player1, f'Ночной матч ({hour}:00 - подозрительное время)'))
         
-        # Ограничиваем до 10 самых свежих доказательств
         return evidence[:10]
     
     def _identify_match_red_flags(self, match: Match, player: Player, is_player1: bool) -> List[str]:
@@ -2903,19 +2887,15 @@ class MatchAnalysisService:
         return min(score, 1.0)
 
     def _get_player_stats_for_trigger(self, player_id: str, start_date: date, end_date: date) -> dict:
-        """Получает статистику игрока для триггера, включая форму и последние матчи"""
-        player = self.db.query(Player).filter(Player.id == player_id).first()
+        """Получает статистику игрока для триггера (оптимизировано — 0 запросов к БД)"""
+        # Из кеша вместо db.query(Player)
+        player = self._players_cache.get(player_id)
         if not player:
             return {}
         
-        # Получаем матчи игрока за период
-        matches = self.db.query(Match).filter(
-            and_(
-                Match.date >= start_date,
-                Match.date <= end_date,
-                or_(Match.player1_id == player.id, Match.player2_id == player.id)
-            )
-        ).order_by(Match.date.desc()).all()
+        # Из кеша вместо db.query(Match)
+        matches = self._matches_by_player.get(player_id, [])
+        matches = sorted(matches, key=lambda m: m.date, reverse=True)
         
         if not matches:
             return {}
@@ -2936,9 +2916,9 @@ class MatchAnalysisService:
             else:
                 recent_form.append('L')
             
-            # Определяем оппонента
+            # Определяем оппонента из кеша
             opponent_id = match.player2_id if match.player1_id == player.id else match.player1_id
-            opponent = self.db.query(Player).filter(Player.id == opponent_id).first()
+            opponent = self._players_cache.get(opponent_id)
             opponent_name = opponent.full_name if opponent else "Неизвестный игрок"
             
             # Получаем результат и счет
@@ -3094,7 +3074,8 @@ class MatchAnalysisService:
             if provider == "lmstudio":
                 request_data["max_tokens"] = self._max_tokens  # Используем настройку из фронтенда
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            # Увеличенный таймаут: 120 сек для LMStudio (загрузка модели + генерация)
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 async with client.stream("POST", api_url, json=request_data) as response:
                     
                     # Проверяем статус ответа
